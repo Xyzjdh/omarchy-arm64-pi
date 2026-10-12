@@ -47,7 +47,7 @@
 set -euo pipefail
 
 ALARM_URL_DEFAULT=http://os.archlinuxarm.org/os/ArchLinuxARM-rpi-aarch64-latest.tar.gz
-ROOT_GIB_DEFAULT=11
+ROOT_GIB_DEFAULT=12
 BOOT_GIB_DEFAULT=1
 LABEL_ID=0x4f4d5049 # fixed MBR disk signature: PARTUUID stays 4f4d5049-0X
 HASH_SEED=4f4d5049-4152-4d36-3430-303030303031
@@ -217,6 +217,12 @@ bsdtar -xpf "$ALARM_TARBALL" -C "$ROOTFS"
 
 mkdir -p "$ROOTFS/opt/omarchy-port"
 mount --bind "$BUNDLE_DIR" "$ROOTFS/opt/omarchy-port" || die 5 "could not bind the bundle into the chroot"
+# The pacman download cache lives on the work filesystem, not in the image:
+# the platform transaction's 1.6 GiB of downloads then needs none of the
+# root partition's space, and the image ships an empty package cache.
+mkdir -p "$WORK_DIR/pacman-cache" "$ROOTFS/var/cache/pacman/pkg"
+mount --bind "$WORK_DIR/pacman-cache" "$ROOTFS/var/cache/pacman/pkg" ||
+  die 5 "could not bind the pacman cache outside the image"
 for sub in proc sys dev; do
   mount --rbind /$sub "$ROOTFS/$sub" || die 5 "could not bind $sub into the chroot"
   mount --make-rslave "$ROOTFS/$sub" || true
@@ -331,6 +337,7 @@ log "unmounting the image filesystems"
 set +e
 for sub in proc sys dev; do umount -R "$ROOTFS/$sub" 2>/dev/null || umount -l "$ROOTFS/$sub" 2>/dev/null; done
 umount -R "$ROOTFS/opt/omarchy-port" 2>/dev/null || umount -l "$ROOTFS/opt/omarchy-port" 2>/dev/null
+umount "$ROOTFS/var/cache/pacman/pkg" 2>/dev/null || umount -l "$ROOTFS/var/cache/pacman/pkg" 2>/dev/null
 umount "$ROOTFS" 2>/dev/null || umount -l "$ROOTFS" 2>/dev/null
 mount | grep -q " $ROOTFS" && { umount -R "$ROOTFS" 2>/dev/null; mount | grep -q " $ROOTFS" && die 7 "$ROOTFS could not be unmounted"; }
 mount | grep -q " $BOOTFS" && { umount -R "$BOOTFS" 2>/dev/null || true; }

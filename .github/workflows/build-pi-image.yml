@@ -15,8 +15,8 @@ on:
         description: "Pin the ALARM rootfs tarball by sha256 (empty = latest; the report records the actual)"
         default: "f10903be472e2662e110f0f7bae2750a30914ce3dc0fcd38ec85d3405d8c8967"
       root_gib:
-        description: "Root partition size in GiB (16 GB cards need <= 12)"
-        default: "11"
+        description: "Root partition size in GiB (16 GB cards need <= 13)"
+        default: "12"
       validate_mode:
         description: "deep (default: full in-image checks; needs ~25 GiB scratch) or shallow"
         default: "deep"
