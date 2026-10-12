@@ -13,7 +13,7 @@ on:
         default: ""
       alarm_sha256:
         description: "Pin the ALARM rootfs tarball by sha256 (empty = latest; the report records the actual)"
-        default: "9d46ed81e783d6d01164006ea83f8de6d41788a313547d118e1c894f62fe4c67"
+        default: "f10903be472e2662e110f0f7bae2750a30914ce3dc0fcd38ec85d3405d8c8967"
       root_gib:
         description: "Root partition size in GiB (16 GB cards need <= 12)"
         default: "11"
@@ -44,7 +44,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            mtools dosfstools e2fsprogs xz-utils
+            mtools dosfstools e2fsprogs xz-utils libarchive-tools
           python3 -m pip install --user zstandard
 
       - name: Verify the package set against the live repositories

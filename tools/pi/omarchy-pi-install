@@ -254,10 +254,12 @@ phase_repos() {
     rm -rf "$tmp"
     die 3 "could not download the [omarchy] repository database"
   fi
-  keyring_file=$(tar --zstd -xOf "$tmp/omarchy.db" omarchy-keyring-*/desc 2>/dev/null |
+  # --wildcards: GNU tar matches member names literally by default, so the
+  # keyring's desc path needs the glob switch to be found in the database.
+  keyring_file=$(tar --zstd --wildcards -xOf "$tmp/omarchy.db" 'omarchy-keyring-*/desc' 2>/dev/null |
     awk '/^%FILENAME%$/{getline; print; exit}') ||
     { rm -rf "$tmp"; die 3 "could not read omarchy-keyring's filename from the repository database"; }
-  keyring_sha=$(tar --zstd -xOf "$tmp/omarchy.db" omarchy-keyring-*/desc 2>/dev/null |
+  keyring_sha=$(tar --zstd --wildcards -xOf "$tmp/omarchy.db" 'omarchy-keyring-*/desc' 2>/dev/null |
     awk '/^%SHA256SUM%$/{getline; print; exit}')
   [[ -n $keyring_file && -n $keyring_sha ]] ||
     { rm -rf "$tmp"; die 3 "the [omarchy] repository database names no checksummed omarchy-keyring"; }
@@ -322,6 +324,31 @@ phase_packages() {
     log "Dry-run: would install $LOCAL_PACKAGE with pacman -U, then the set above."
     return 0
   fi
+
+  # omarchy-settings' mkinitcpio baseline (00-omarchy-hooks.conf) names hooks
+  # with no aarch64 build (btrfs-overlayfs today), and mkinitcpio aborts on a
+  # hook with no implementation -- which would fail the very transaction
+  # below, before the Pi hardware leaf writes its filter during
+  # omarchy-apply-system. Write the same self-cleaning filter first: it only
+  # keeps hooks whose implementations exist, so it is a no-op wherever every
+  # named hook is installed, and the leaf's later copy
+  # (install/hardware/pi/setup.sh) simply rewrites it.
+  mkdir -p "$PI_ROOT/etc/mkinitcpio.conf.d"
+  cat >"$PI_ROOT/etc/mkinitcpio.conf.d/pi-hooks.conf" <<'EOF'
+# Raspberry Pi: keep only initramfs hooks whose implementations are installed.
+# Sourced after omarchy-settings' 00-omarchy-hooks.conf baseline, which names
+# hooks (btrfs-overlayfs) with no aarch64 build today.
+_pi_kept_hooks=()
+for _pi_hook in "${HOOKS[@]:-}"; do
+  if [[ -f /usr/lib/initcpio/install/$_pi_hook || -f /usr/lib/initcpio/hooks/$_pi_hook ]]; then
+    _pi_kept_hooks+=("$_pi_hook")
+  else
+    echo "omarchy-pi: dropping initramfs hook with no aarch64 build: $_pi_hook" >&2
+  fi
+done
+HOOKS=("${_pi_kept_hooks[@]:-}")
+unset _pi_kept_hooks _pi_hook
+EOF
 
   pacman -U --noconfirm "$LOCAL_PACKAGE" ||
     die 7 "pacman -U $(basename "$LOCAL_PACKAGE") failed (see $LOG_FILE)"

@@ -47,11 +47,16 @@ Until the owner form creates a user, `root` has ALARM's documented password
 
 `cmdline.txt` is explicit: `root=/dev/mmcblk0p2 rootwait
 console=serial0,115200 console=tty1`. The kernel is `linux-rpi`, the
-Raspberry Pi downstream kernel, whose DTB and overlays come from the
-installed `raspberrypi-bootloader` package; the ALARM tarball's generic
-aarch64 kernel is removed during the build (only pacman-untracked files
-in `/boot` and `/usr/lib/modules` are ever removed, and `config.txt` /
-`cmdline.txt` are preserved).
+Raspberry Pi downstream kernel; installing it replaces the ALARM base's
+generic `linux-aarch64` and its u-boot through pacman's own conflict
+resolution (linux-rpi conflicts with both), and the bootloader, overlays
+and VideoCore firmware come from the `raspberrypi-*`/`firmware-raspberrypi`
+packages. The builder's cleanup only removes what no installed package
+owns in `/boot` and `/usr/lib/modules`; `config.txt` and `cmdline.txt` are
+always preserved. The ALARM rootfs is extracted with bsdtar because the
+tarball carries `security.capability` xattrs that GNU tar drops, and the
+initramfs hook filter is in place before the first kernel transaction so
+`mkinitcpio` cannot fail on hooks without an aarch64 build.
 
 ## Building
 
@@ -64,7 +69,8 @@ stay on the run page for 30 days.
 
 Inputs: `ref` (what to build), `alarm_sha256` (pin the ALARM rootfs
 tarball; the default pins the tarball the port verified at
-`9d46ed81e783d6d01164006ea83f8de6d41788a313547d118e1c894f62fe4c67`),
+`f10903be472e2662e110f0f7bae2750a30914ce3dc0fcd38ec85d3405d8c8967`,
+850,215,189 bytes),
 `root_gib` (default 11; 16 GB cards need <= 12), `validate_mode` (deep or
 shallow).
 

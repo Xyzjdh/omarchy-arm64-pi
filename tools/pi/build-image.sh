@@ -107,7 +107,7 @@ done
 # --- prerequisites ------------------------------------------------------------
 [[ $(id -u) -eq 0 ]] || die 2 "must run as root (loop devices and chroot are needed); only -h runs unprivileged"
 
-for tool in sfdisk losetup mkfs.vfat fsck.vfat mtype mkfs.ext4 e2fsck xz curl sha256sum dd; do
+for tool in sfdisk losetup mkfs.vfat fsck.vfat mtype mkfs.ext4 e2fsck xz curl sha256sum dd bsdtar; do
   command -v "$tool" >/dev/null 2>&1 || die 2 "required tool '$tool' is not installed"
 done
 
@@ -212,12 +212,8 @@ mkfs.ext4 -F -q -b 4096 -E "hash_seed=$HASH_SEED,lazy_itable_init=0,lazy_journal
 # --- 3. base root filesystem ---------------------------------------------------
 mkdir -p "$ROOTFS"
 mount "${LOOP}p2" "$ROOTFS" || die 4 "could not mount the root partition"
-log "extracting the ALARM rootfs (as root; ownership is preserved)"
-if command -v bsdtar >/dev/null 2>&1; then
-  bsdtar -xpf "$ALARM_TARBALL" -C "$ROOTFS"
-else
-  tar -xpf "$ALARM_TARBALL" -C "$ROOTFS"
-fi
+log "extracting the ALARM rootfs with bsdtar (it preserves the tarball's security.capability xattrs, which GNU tar would drop)"
+bsdtar -xpf "$ALARM_TARBALL" -C "$ROOTFS"
 
 mount --bind "$BUNDLE_DIR" "$ROOTFS/opt/omarchy-port" || die 5 "could not bind the bundle into the chroot"
 for sub in proc sys dev; do
@@ -242,10 +238,11 @@ chroot_run() {
 install -D -m 0644 -o root -g root /dev/null "$ROOTFS/var/lib/omarchy/image/target"
 printf 'format=1\nplatform=aarch64-pi\n# written by tools/pi/build-image.sh\n' >"$ROOTFS/var/lib/omarchy/image/target"
 
-# The ALARM tarball ships no pacman database and no initialized keyring: bring
-# the trust chain up exactly the way the ALARM setup instructions do, then
-# refresh pacman itself so the [omarchy] template's DownloadUser=alpm user
-# exists (created by pacman's sysusers hook) before the installer relies on it.
+# The ALARM tarball ships a populated pacman database but no initialized
+# keyring: bring the trust chain up exactly the way the ALARM setup
+# instructions do, then refresh pacman itself so the [omarchy] template's
+# DownloadUser=alpm user exists (created by pacman's sysusers hook) before
+# the installer relies on it.
 log "chroot: initializing the pacman keyring (archlinuxarm)"
 chroot_run /bin/bash -e -c 'pacman-key --init && pacman-key --populate archlinuxarm' ||
   die 5 "pacman-key --init/--populate archlinuxarm failed in the chroot"

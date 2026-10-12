@@ -140,6 +140,56 @@ PATH="$fx/bin:$ROOT/bin:$PATH" TEST_ARCH=aarch64 OMARCHY_PROC_ROOT="$fx/proc" \
 (( status == 6 )) || fail "a plain unprivileged install is refused with code 6 (got $status)" "$(cat "$fx/error")"
 pass "a plain unprivileged install is refused"
 
+# --- the initramfs hook filter precedes the kernel transaction ----------------
+# A real-mode fixture run (fake pacman succeeds, real curl is replaced by one
+# that materializes the keyring database and package): the installer must get
+# through the packages phase, leaving the mkinitcpio hook filter in place,
+# before it dies in the system phase (whose omarchy-apply-system does not
+# exist in the fixture root). Needs zstd to build the fixture repo database.
+if command -v zstd >/dev/null 2>&1; then
+  filter_root="$fx/filter-root"
+  mkdir -p "$filter_root/etc/pacman.d"
+  printf '[options]\n\n[core]\nServer = http://mirror.example.org/aarch64/core\n' >"$filter_root/etc/pacman.conf"
+  printf 'Server = http://mirror.example.org/aarch64/$repo\n' >"$filter_root/etc/pacman.d/mirrorlist"
+  printf 'fake keyring package\n' >"$fx/keyring.pkg"
+  keyring_sha=$(sha256sum "$fx/keyring.pkg" | awk '{print $1}')
+  mkdir -p "$fx/db-src/omarchy-keyring-1-1"
+  printf '%%FILENAME%%\nfake-keyring.pkg\n\n%%SHA256SUM%%\n%s\n' "$keyring_sha" >"$fx/db-src/omarchy-keyring-1-1/desc"
+  tar -C "$fx/db-src" --zstd -cf "$fx/omarchy.db" omarchy-keyring-1-1
+  cat >"$fx/bin/curl" <<EOF
+#!/bin/bash
+out=""
+prev=""
+for a in "\$@"; do
+  [[ \$prev == "-o" ]] && out=\$a
+  prev=\$a
+done
+case "\$out" in
+  "") exit 0 ;;
+  *omarchy.db) cat "$fx/omarchy.db" >"\$out" ;;
+  *) cat "$fx/keyring.pkg" >"\$out" ;;
+esac
+EOF
+  chmod +x "$fx/bin/curl"
+
+  status=0
+  OMARCHY_PI_ROOT="$filter_root" OMARCHY_PROC_ROOT="$fx/proc" \
+    PATH="$fx/bin:$ROOT/bin:$PATH" TEST_ARCH=aarch64 \
+    bash "$installer" --bundle-dir "$fx/bundle" --log-file "$fx/filter-run.log" \
+    >"$fx/filter-out" 2>&1 || status=$?
+  (( status == 8 )) ||
+    fail "the fixture run reaches the system phase (exit 8, got $status)" "$(tail -5 "$fx/filter-out")"
+  [[ -f $filter_root/etc/mkinitcpio.conf.d/pi-hooks.conf ]] ||
+    fail "the initramfs hook filter is written before the packages phase"
+  grep -q "btrfs-overlayfs" "$filter_root/etc/mkinitcpio.conf.d/pi-hooks.conf" ||
+    fail "the filter documents the hook it guards"
+  grep -q -- " -S --needed " "$pacman_log" ||
+    fail "the platform set was installed in the same run"
+  pass "the initramfs hook filter is in place before the kernel transaction"
+else
+  echo "ok - initramfs filter run skipped (zstd not installed) # SKIP"
+fi
+
 # --- --verify checks a finished install read-only ---------------------------
 verify_root="$fx/verify-root"
 mkdir -p "$verify_root/usr/share/omarchy/bin" "$verify_root/etc" "$verify_root/var/lib/omarchy/provisioning"
