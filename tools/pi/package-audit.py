@@ -54,6 +54,17 @@ def db_path(data_dir: Path, repo: str) -> Path:
     return data_dir / f"{repo}.db"
 
 
+def _http_get(url: str, timeout: int = 60) -> bytes:
+    """GET a URL with the tool's own User-Agent.
+
+    pkgs.omarchy.org (and the AUR) answer 403 to Python-urllib's default
+    User-Agent, so every request carries the tool's name instead.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "omarchy-package-audit/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
 def fetch(data_dir: Path) -> dict[str, str]:
     """Download the repo databases. Returns {repo: 'fresh'|'cached'}."""
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +77,7 @@ def fetch(data_dir: Path) -> dict[str, str]:
             continue
         sys.stderr.write(f"fetching {repo}: {url}\n")
         tmp = dest.with_suffix(".db.part")
-        urllib.request.urlretrieve(url, tmp)
+        tmp.write_bytes(_http_get(url))
         os.replace(tmp, dest)
         marker.write_text(REPOS[repo] + "\n")
         status[repo] = "fresh"
@@ -154,8 +165,7 @@ def aur_pkgbuild_arch(name: str) -> str | None:
     """Fetch the PKGBUILD's arch= line for one AUR package, or None."""
     url = f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={urllib.request.quote(name)}"
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
+        text = _http_get(url, timeout=30).decode("utf-8", errors="replace")
     except Exception:
         return None
     for line in text.splitlines():
@@ -210,13 +220,14 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent.parent  # repo root
     data_dir = (root / args.data_dir).resolve() if not Path(args.data_dir).is_absolute() else Path(args.data_dir)
-    manifest_dir = root / args.manifest_dir
 
     if args.cmd == "fetch":
         status = fetch(data_dir)
         for repo, st in status.items():
             print(f"{repo}: {st}")
         return 0
+
+    manifest_dir = root / args.manifest_dir
 
     # ---- report / check share the classification logic ----
     for repo in REPOS:
