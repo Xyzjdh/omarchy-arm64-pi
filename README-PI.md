@@ -40,7 +40,28 @@ upstream project.
 
 ## Quick start
 
-On a working Arch Linux ARM Raspberry Pi 5 system:
+**Option A -- flash the prebuilt image.** The
+[pi-2026.10.12 prerelease](https://github.com/Xyzjdh/omarchy-arm64-pi/releases/tag/pi-2026.10.12)
+carries a bootable SD-card image built by this pipeline: the full Omarchy
+desktop preinstalled (862 packages), first-boot owner provisioning armed,
+statically validated (deep mode) and **not yet validated on hardware**.
+It needs a card of at least 16 GB. Above GitHub's 2 GiB per-asset cap the
+image ships as numbered `.part` files -- join, verify, flash:
+
+```bash
+cat omarchy-arm64-pi-*.img.xz.*.part > omarchy-arm64-pi-<label>-aarch64.img.xz
+sha256sum -c SHA256SUMS.parts   # each part, then the joined image:
+sha256sum -c SHA256SUMS.image
+xzcat omarchy-arm64-pi-<label>-aarch64.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+Raspberry Pi Imager takes the `.img.xz` directly (Choose OS -> Use
+custom). First boot: the root partition grows to the card, the owner form
+runs on tty1 and creates your user, then SDDM starts the desktop; until
+then root's password is `alarm`. Details, hardware caveats and flashing
+help: `docs/pi/image-build.md`.
+
+**Option B -- install onto a running Arch Linux ARM Pi 5.**
 
 ```bash
 git clone -b arm64-pi https://github.com/Xyzjdh/omarchy-arm64-pi omarchy-pi

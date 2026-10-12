@@ -63,16 +63,22 @@ initramfs hook filter is in place before the first kernel transaction so
 The reference build environment is a GitHub arm64 runner
 (`ubuntu-24.04-arm`): root, loop devices and native aarch64, so the chroot
 runs at full speed. The workflow is **dispatch-only**
-(`.github/workflows/build-pi-image.yml`): no build happens on push, and the
-workflow never attaches the image to a release or publishes it. Artifacts
-stay on the run page for 30 days.
+(`.github/workflows/build-pi-image.yml`): no build happens on push, and
+every dispatch leaves the artifact on the run page for 30 days. Attaching
+the image to a release is a separate, explicit dispatch decision:
+`publish=true` plus `release_tag` uploads the compressed image, its
+checksums and the build report to that release from the runner itself.
 
 Inputs: `ref` (what to build), `alarm_sha256` (pin the ALARM rootfs
 tarball; the default pins the tarball the port verified at
 `f10903be472e2662e110f0f7bae2750a30914ce3dc0fcd38ec85d3405d8c8967`,
-850,215,189 bytes),
-`root_gib` (default 12; 16 GB cards need <= 13), `validate_mode` (deep or
-shallow).
+850,215,189 bytes), `root_gib` (default 12; 16 GB cards need <= 13),
+`validate_mode` (deep or shallow), `publish` (attach to the release;
+default false) and `release_tag` (which release; default
+`pi-2026.10.12`). GitHub caps a release asset at 2 GiB, so an image above
+that size ships as numbered `.part` files: join with
+`cat <name>.img.xz.*.part > <name>.img.xz`, verify each part with
+`SHA256SUMS.parts`, then the joined image with `SHA256SUMS.image`.
 
 The workflow gates on `tools/pi/package-audit.py check` (the package set
 must still resolve against the live repositories), builds the `omarchy-dev`
@@ -168,9 +174,14 @@ When a board passes that list, record it in
 ## Publication policy
 
 The image is not pushed, attached to a release, or published anywhere
-without the owner's explicit decision. The workflow uploads nothing but a
-run artifact; deleting the run removes it. This document is the contract
-that keeps the honest labels of the rest of the port.
+without the owner's explicit decision. A dispatch without `publish=true`
+uploads nothing but a run artifact; deleting the run removes it. A dispatch
+with `publish=true` *is* that explicit decision: it is recorded in the
+run's inputs and in the build report that lands on the release, and the
+upload happens on the runner with the repository's own scoped token. The
+first such publication was authorized by the owner on 2026-10-12. This
+document is the contract that keeps the honest labels of the rest of the
+port.
 
 ## Where things live
 
@@ -181,4 +192,4 @@ that keeps the honest labels of the rest of the port.
 | `tools/pi/image/resize-root.sh` | in-image first-boot partition grow |
 | `tools/pi/image/omarchy-pi-resize.service` | its unit (ConditionFirstBoot) |
 | `test/shell.d/pi-image-validator-test.sh` | the validator's own test |
-| `.github/workflows/build-pi-image.yml` | dispatch-only CI build |
+| `.github/workflows/build-pi-image.yml` | dispatch-only CI build (+ gated release publish) |

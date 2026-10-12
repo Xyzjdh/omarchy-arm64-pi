@@ -45,8 +45,15 @@ Honest labels, in order (pick the one the evidence supports):
 - [ ] `SHA256SUMS` covering every artifact, `sha256sum -c` passes
 - [ ] Release notes naming: the label, the upstream commit, the built
       package version, the open hardware items
+- [ ] SD-card image (dispatch `build-pi-image.yml` with `publish=true`):
+      deep validation passed in the run, `build-report.txt` uploaded, parts
+      joined and `SHA256SUMS.image` verified locally before announcing
 
-## Publishing (requires explicit authorization — never done by an agent)
+## Publishing (requires explicit authorization — never done by an agent
+without it)
 
 - [ ] Push branch / tag, upload bundle, announce — only with the
   owner's sign-off
+- [ ] Image publication happens through the owner's `publish=true`
+      dispatch (first authorized 2026-10-12); record every such dispatch
+      in the release notes

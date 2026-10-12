@@ -1,9 +1,11 @@
 name: Build Raspberry Pi 5 image
 
 # Dispatch-only by design: the image is built when someone explicitly asks
-# for a build, and the artifact stays on the run page. This workflow never
-# attaches the image to a release and never publishes it -- that step needs
-# the owner's decision (docs/pi/image-build.md has the policy).
+# for a build, and every dispatch leaves the artifact on the run page.
+# Publishing is a separate, equally explicit decision: dispatch with
+# publish=true and release_tag, and the built image, its checksums and the
+# build report are attached to that release from the runner (the policy
+# lives in docs/pi/image-build.md).
 
 on:
   workflow_dispatch:
@@ -20,9 +22,17 @@ on:
       validate_mode:
         description: "deep (default: full in-image checks; needs ~25 GiB scratch) or shallow"
         default: "deep"
+      publish:
+        description: "Attach the built image and its report to the release named by release_tag (the owner's explicit decision; default: no)"
+        default: "false"
+      release_tag:
+        description: "Release tag the image assets attach to when publish=true"
+        default: "pi-2026.10.12"
 
 permissions:
-  contents: read
+  # write is needed only by the publish step, and that step runs only when
+  # the dispatch explicitly asks for it; the build steps never use the token.
+  contents: write
 
 concurrency:
   group: build-pi-image
@@ -90,3 +100,40 @@ jobs:
             build/out/pacman-image.log
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish the image to the release (explicit owner decision)
+        if: ${{ inputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          mapfile -t imgs < <(ls build/out/*.img.xz)
+          ((${#imgs[@]} == 1)) || { echo "expected exactly one image in build/out, found ${#imgs[@]}"; ls -la build/out; exit 1; }
+          img=${imgs[0]}
+          size=$(stat -c %s "$img")
+          echo "publishing $(basename "$img") ($size bytes) to release $tag"
+          assets=(build/out/build-report.txt build/out/image-packages.txt)
+          if [[ -f build/out/SHA256SUMS ]]; then
+            cp -f build/out/SHA256SUMS build/out/SHA256SUMS.image
+            assets+=(build/out/SHA256SUMS.image)
+          fi
+          for f in omarchy-pi-image-install.log omarchy-install.log pacman-image.log; do
+            if [[ -f "build/out/$f" ]]; then assets+=("build/out/$f"); fi
+          done
+          # GitHub caps a release asset at 2 GiB; a larger image ships as
+          # numbered .part files the flasher joins back with cat.
+          if (( size <= 2000000000 )); then
+            assets+=("$img")
+          else
+            echo "the compressed image exceeds the 2 GiB per-asset limit; splitting it"
+            split -b 1900000000 -d --additional-suffix=.part "$img" "$img."
+            sha256sum "$img".[0-9][0-9].part > build/out/SHA256SUMS.parts
+            assets+=(build/out/SHA256SUMS.parts)
+            for part in "$img".[0-9][0-9].part; do assets+=("$part"); done
+          fi
+          gh release view "$tag" --json tagName,isPrerelease --jq '"release: " + .tagName + " (prerelease: " + (.isPrerelease|tostring) + ")"'
+          gh release upload "$tag" "${assets[@]}" --clobber
+          echo "published assets:"
+          gh release view "$tag" --json assets --jq '.assets[] | "  \(.name)  \(.size) bytes"'
