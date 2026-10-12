@@ -108,9 +108,13 @@ upstream's released PKGBUILD `package()` logic (bin/ minus debug helpers
 → `/usr/bin` + symlink into `/usr/share/omarchy/bin`; `install/`,
 `themes/`, `migrations/`, `shell/`, `version` → `/usr/share/omarchy`;
 alpm hooks; `/etc/skel` migration markers). Dependencies mirror the
-upstream dev pair, minus `omarchy-security-functions` (not published in
-`[omarchy]` edge aarch64 at audit time — the script itself ships in
-`bin/` per the release recipe; see `docs/pi/upstream-audit.md` item 11).
+upstream dev pair, minus `omarchy-security-functions`: upstream folded
+that script and `omarchy-sudo-passwordless` into the published
+`omarchy-settings-dev` (verified against the live `[omarchy]` edge
+aarch64 database — carrying them here as well made `pacman -U` refuse
+the transaction with conflicting files), so both are excluded from this
+package's `bin/` and arrive through the `omarchy-settings-dev`
+dependency. See `docs/pi/upstream-audit.md` item 11.
 `omarchy-settings-dev` is **not** rebuilt: the fork changes no `default/`
 file, so upstream's published settings-dev (same baseline commit)
 remains authoritative.

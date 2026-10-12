@@ -16,10 +16,11 @@ omarchy-settings-dev is NOT rebuilt here: this fork ships no changes under
 default/, so upstream's published settings-dev package stays authoritative.
 
 Dependencies mirror the published omarchy-dev aarch64 pair minus
-omarchy-security-functions, which the [omarchy] edge aarch64 repository has not
-published at audit time (upstream packaging work in progress; the script itself
-ships in bin/ here exactly as the release recipe ships it). See
-docs/pi/porting-decisions.md D8.
+omarchy-security-functions: upstream folded that script and
+omarchy-sudo-passwordless into the published omarchy-settings-dev (verified
+in the live [omarchy] edge aarch64 repository database), so this package
+excludes both from bin/ and they reach the system through the
+omarchy-settings-dev dependency. See docs/pi/porting-decisions.md D8.
 
 Reproducibility: every archive entry carries the source commit's timestamp
 (like SOURCE_DATE_EPOCH), uid/gid 0 with uname/gname root, PAX tar format and
@@ -53,7 +54,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-SKIP_BINS = {"omarchy-debug", "omarchy-debug-idle", "omarchy-upload-log"}
+# Upstream's published omarchy-settings-dev owns these two scripts since the
+# quattro line (verified in the live [omarchy] edge aarch64 repo database:
+# /usr/bin/<name> and /usr/share/omarchy/bin/<name> in both packages would
+# make pacman -U refuse the transaction with conflicting files). They still
+# reach the system through the omarchy-settings-dev dependency.
+SKIP_BINS = {
+    "omarchy-debug",
+    "omarchy-debug-idle",
+    "omarchy-upload-log",
+    "omarchy-security-functions",
+    "omarchy-sudo-passwordless",
+}
 SHIP_HOOKS = [
     "00-omarchy-update-guard.hook",
     "10-omarchy-hyprland-reload-pause.hook",
