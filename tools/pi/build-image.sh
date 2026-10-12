@@ -466,7 +466,9 @@ mv -f -- "$IMG_XZ" "$ARTIFACT"
 cp -f "$WORK_DIR/image-packages.txt" "$OUT_DIR/" 2>/dev/null || true
 (cd "$OUT_DIR" && sha256sum "$(basename "$ARTIFACT")" build-report.txt >SHA256SUMS)
 
-losetup -d "$LOOP"
+# The loop may already be gone (the filesystem-check fallback detaches and
+# reattaches it, and autoclear may have released it during compression).
+losetup -d "$LOOP" 2>/dev/null || true
 trap - EXIT
 (( CLEAN )) && rm -rf -- "$WORK_DIR"
 
