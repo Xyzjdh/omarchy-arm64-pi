@@ -192,8 +192,23 @@ LOOP=$(losetup --find --partscan --show "$IMG") || die 4 "no loop device availab
 log "image: $IMG ($((TOTAL_SECTORS / 2097152)) GiB) on $LOOP (p1 FAT $BOOT_GIB GiB, p2 ext4 $ROOT_GIB GiB)"
 ROOTFS="$WORK_DIR/rootfs"
 BOOTFS="$WORK_DIR/boot-fs"
+# Daemons started inside the chroot (gpg-agent from pacman-key above all)
+# keep the rootfs busy after the installer exits; they must be stopped before
+# the image can be unmounted and checked.
+kill_rootfs_processes() {
+  local proc pid root signal=$1
+  for proc in /proc/[0-9]*; do
+    pid=${proc#/proc/}
+    root=$(readlink "$proc/root" 2>/dev/null) || continue
+    [[ $root == "$ROOTFS" || $root == "$ROOTFS"/* ]] || continue
+    kill -"$signal" "$pid" 2>/dev/null || true
+  done
+}
 cleanup() {
   set +e
+  kill_rootfs_processes TERM 2>/dev/null
+  sleep 1
+  kill_rootfs_processes KILL 2>/dev/null
   local mounted
   for mounted in \
     "$(mount | awk -v r="$ROOTFS" '$3 ~ "^" r "/" {print $3}' | sort -r)" \
@@ -339,7 +354,10 @@ find "$ROOTFS/boot" -mindepth 1 -delete
 umount "$BOOTFS"
 
 # --- 8. teardown and filesystem checks -----------------------------------------
-log "unmounting the image filesystems"
+log "stopping chroot daemons and unmounting the image filesystems"
+kill_rootfs_processes TERM
+sleep 2
+kill_rootfs_processes KILL
 set +e
 for sub in proc sys dev; do umount -R "$ROOTFS/$sub" 2>/dev/null || umount -l "$ROOTFS/$sub" 2>/dev/null; done
 umount -R "$ROOTFS/opt/omarchy-port" 2>/dev/null || umount -l "$ROOTFS/opt/omarchy-port" 2>/dev/null
