@@ -193,14 +193,28 @@ log "image: $IMG ($((TOTAL_SECTORS / 2097152)) GiB) on $LOOP (p1 FAT $BOOT_GIB G
 ROOTFS="$WORK_DIR/rootfs"
 BOOTFS="$WORK_DIR/boot-fs"
 # Daemons started inside the chroot (gpg-agent from pacman-key above all)
-# keep the rootfs busy after the installer exits; they must be stopped before
-# the image can be unmounted and checked.
+# keep the rootfs busy after the installer exits -- through their root, cwd or
+# open files. Lazy unmounts would hide the mount while the filesystem stays
+# busy, so every holder is found through /proc and stopped before the image is
+# unmounted and checked.
 kill_rootfs_processes() {
-  local proc pid root signal=$1
+  local proc pid link fdlink target signal=$1 matched
   for proc in /proc/[0-9]*; do
     pid=${proc#/proc/}
-    root=$(readlink "$proc/root" 2>/dev/null) || continue
-    [[ $root == "$ROOTFS" || $root == "$ROOTFS"/* ]] || continue
+    matched=0
+    for link in root cwd; do
+      target=$(readlink "$proc/$link" 2>/dev/null) || continue
+      [[ $target == "$ROOTFS" || $target == "$ROOTFS"/* ]] && matched=1
+    done
+    for fdlink in "$proc"/fd/*; do
+      target=$(readlink "$fdlink" 2>/dev/null) || continue
+      if [[ $target == "$ROOTFS"/* ]]; then
+        matched=1
+        break
+      fi
+    done
+    (( matched )) || continue
+    echo "build-image: signal $signal to pid $pid (holds $ROOTFS)" >&2
     kill -"$signal" "$pid" 2>/dev/null || true
   done
 }
@@ -355,9 +369,11 @@ umount "$BOOTFS"
 
 # --- 8. teardown and filesystem checks -----------------------------------------
 log "stopping chroot daemons and unmounting the image filesystems"
+chroot_run /bin/bash -c 'gpgconf --kill gpg-agent >/dev/null 2>&1 || true' || true
 kill_rootfs_processes TERM
 sleep 2
 kill_rootfs_processes KILL
+sleep 1
 set +e
 for sub in proc sys dev; do umount -R "$ROOTFS/$sub" 2>/dev/null || umount -l "$ROOTFS/$sub" 2>/dev/null; done
 umount -R "$ROOTFS/opt/omarchy-port" 2>/dev/null || umount -l "$ROOTFS/opt/omarchy-port" 2>/dev/null
