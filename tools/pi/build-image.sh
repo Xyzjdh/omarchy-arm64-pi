@@ -383,10 +383,38 @@ mount | grep -q " $ROOTFS" && { umount -R "$ROOTFS" 2>/dev/null; mount | grep -q
 mount | grep -q " $BOOTFS" && { umount -R "$BOOTFS" 2>/dev/null || true; }
 set -e
 log "checking filesystems (e2fsck, fsck.vfat)"
-rc=0; e2fsck -fy "${LOOP}p2" || rc=$?
-(( rc <= 1 )) || die 7 "e2fsck failed on the root partition (exit $rc)"
-rc=0; fsck.vfat -p "${LOOP}p1" || rc=$?
-(( rc <= 1 )) || die 7 "fsck.vfat failed on the boot partition (exit $rc)"
+fsck_attempt() {
+  local rc=0
+  e2fsck -fy "${LOOP}p2" || rc=$?
+  if (( rc > 1 )); then return "$rc"; fi
+  rc=0
+  fsck.vfat -p "${LOOP}p1" || rc=$?
+  (( rc <= 1 )) || return "$rc"
+  return 0
+}
+if ! fsck_attempt; then
+  echo "build-image: filesystem check reported the loop busy; loop state and holders:" >&2
+  losetup -a 2>/dev/null >&2 || true
+  findmnt -no TARGET,SOURCE 2>/dev/null | grep -E "loop|boot-fs|rootfs" >&2 || true
+  for proc in /proc/[0-9]*; do
+    for fdlink in "$proc"/fd/*; do
+      target=$(readlink "$fdlink" 2>/dev/null) || continue
+      case $target in
+        "$LOOP" | "$LOOP"p[0-9]* | "$IMG") echo "build-image: $proc holds $target" >&2 ;;
+      esac
+    done
+  done
+  sleep 5
+  if ! fsck_attempt; then
+    # The loop's partition devices can stay wedged after a lazy release; drop
+    # the whole loop and reattach the image so the check gets clean devices.
+    losetup -d "$LOOP" 2>/dev/null || true
+    sleep 2
+    LOOP=$(losetup --find --partscan --show "$IMG") || die 7 "could not reattach the image for the filesystem check"
+    fsck_attempt || die 7 "e2fsck/fsck.vfat failed on the reattached loop"
+  fi
+fi
+losetup -d "$LOOP" 2>/dev/null || true
 
 # --- 9. validation --------------------------------------------------------------
 log "validating the image ($VALIDATE_MODE)"
