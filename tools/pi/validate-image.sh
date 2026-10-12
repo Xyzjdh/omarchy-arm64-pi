@@ -146,14 +146,21 @@ fi
 
 # --- 3. boot partition contents --------------------------------------------
 carve "$p1_start" "$p1_sectors" "$work/boot.img"
+# Listings are captured before any grep reads them: grep -q exits on the
+# first match, and under pipefail a producer still writing (mdir's later
+# lines) would die to SIGPIPE and fail the whole pipeline -- a race that
+# showed up as a spurious "overlays/ is missing". Capturing first is
+# deterministic.
+boot_listing=$(mdir -b -i "$work/boot.img" "::/" 2>/dev/null || true)
+overlays_listing=$(mdir -b -i "$work/boot.img" "::/overlays" 2>/dev/null || true)
 fat_file() { mtype -i "$work/boot.img" "::/$1" 2>/dev/null; }
-fat_present() { mdir -b -i "$work/boot.img" "::/" 2>/dev/null | grep -qxF "::/$1"; }
+fat_present() { grep -qxF "::/$1" <<<"$boot_listing"; }
 
 for f in kernel8.img initramfs-linux.img start4.elf fixup4.dat bcm2712-rpi-5-b.dtb config.txt cmdline.txt; do
   fat_present "$f" && ok "boot: $f present" || bad "boot: $f missing from the FAT partition"
 done
-if mdir -b -i "$work/boot.img" "::/overlays" 2>/dev/null | grep -q '^::/overlays/.'; then
-  overlay_count=$(mdir -b -i "$work/boot.img" "::/overlays" 2>/dev/null | grep -c '^::/overlays/.')
+if grep -q '^::/overlays/.' <<<"$overlays_listing"; then
+  overlay_count=$(grep -c '^::/overlays/.' <<<"$overlays_listing")
   [[ $overlay_count -ge 10 ]] && ok "boot: overlays/ carries $overlay_count overlays" ||
     bad "boot: overlays/ has only $overlay_count entries"
 else
@@ -219,11 +226,12 @@ if (( DEEP )); then
   pacman_conf=$(dbg_text "/etc/pacman.conf")
   [[ $pacman_conf == *"[omarchy]"* ]] && ok "root: the [omarchy] repository is configured" ||
     bad "root: /etc/pacman.conf carries no [omarchy] repository"
-  pkg_count=$(dbg "ls -p /var/lib/pacman/local" | grep -vc '/\.\.\?//$')
+  pacman_local=$(dbg "ls -p /var/lib/pacman/local")
+  pkg_count=$(grep -vc '/\.\.\?//$' <<<"$pacman_local")
   [[ $pkg_count -ge 150 ]] && ok "root: pacman database lists $pkg_count packages" ||
     bad "root: pacman database lists only $pkg_count packages"
   for pkg_dir in omarchy-dev- linux-rpi- hyprland quickshell sddm raspberrypi-bootloader; do
-    dbg "ls -p /var/lib/pacman/local" | grep -q "$pkg_dir" ||
+    grep -q "$pkg_dir" <<<"$pacman_local" ||
       bad "root: package database lacks an entry matching '$pkg_dir*'"
   done && ok "root: key packages (omarchy-dev, linux-rpi, hyprland, quickshell, sddm, raspberrypi-bootloader) are registered"
 
@@ -232,11 +240,13 @@ if (( DEEP )); then
     bad "root: resize script mode is '$rmode', expected 0755"
   [[ -n $(dbg "stat /usr/lib/systemd/system/omarchy-pi-resize.service") ]] &&
     ok "root: the resize unit is installed" || bad "root: omarchy-pi-resize.service is missing"
-  dbg "ls -l /etc/systemd/system/multi-user.target.wants" 2>/dev/null | grep -q omarchy-pi-resize &&
+  wants_listing=$(dbg "ls -l /etc/systemd/system/multi-user.target.wants")
+  system_listing=$(dbg "ls -l /etc/systemd/system")
+  grep -q omarchy-pi-resize <<<"$wants_listing" &&
     ok "root: the resize unit is enabled for the first boot" || bad "root: resize unit is not enabled in multi-user.target.wants"
-  dbg "ls -l /etc/systemd/system/multi-user.target.wants" 2>/dev/null | grep -q omarchy-provision-owner &&
+  grep -q omarchy-provision-owner <<<"$wants_listing" &&
     ok "root: the owner-provisioning unit is enabled" || bad "root: provisioning unit is not enabled in multi-user.target.wants"
-  dbg "ls -l /etc/systemd/system" 2>/dev/null | grep -q "display-manager.service" &&
+  grep -q "display-manager.service" <<<"$system_listing" &&
     ok "root: a display manager (SDDM) is enabled" || bad "root: no display-manager.service symlink (SDDM not enabled)"
   ldsocache=$(dbg "stat /etc/ld.so.cache" | sed -n 's/^User:.*Size: \([0-9]*\).*/\1/p')
   [[ -n $ldsocache && $ldsocache -gt 0 ]] && ok "root: ld.so.cache was regenerated" ||
