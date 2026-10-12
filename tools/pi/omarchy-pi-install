@@ -350,6 +350,23 @@ HOOKS=("${_pi_kept_hooks[@]:-}")
 unset _pi_kept_hooks _pi_hook
 EOF
 
+  # linux-rpi conflicts with the generic linux-aarch64 kernel and with
+  # uboot-raspberrypi (the ALARM base installs both). --noconfirm answers
+  # pacman's "Remove ...?" prompt with its default -- No -- which aborts the
+  # whole transaction, so both are removed first: their files are exactly
+  # what the platform kernel and firmware replace.
+  local -a remove_set=()
+  for pkg in linux-aarch64 uboot-raspberrypi; do
+    if pacman -Q "$pkg" >/dev/null 2>&1; then
+      remove_set+=("$pkg")
+    fi
+  done
+  if ((${#remove_set[@]})); then
+    pacman -Rns --noconfirm "${remove_set[@]}" ||
+      die 7 "could not remove ${remove_set[*]}, which linux-rpi conflicts with"
+    log "Removed ${remove_set[*]} (linux-rpi conflicts with both)."
+  fi
+
   pacman -U --noconfirm "$LOCAL_PACKAGE" ||
     die 7 "pacman -U $(basename "$LOCAL_PACKAGE") failed (see $LOG_FILE)"
   log "Installed $(basename "$LOCAL_PACKAGE")."

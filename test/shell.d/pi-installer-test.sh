@@ -56,7 +56,7 @@ case " \$* " in
       [[ \$arg == -Q ]] && continue
       [[ \$arg == --noconfirm ]] && continue
       case \$arg in
-        omarchy-dev|omarchy-settings-dev|linux-rpi|raspberrypi-bootloader|hyprland|quickshell|sddm)
+        omarchy-dev|omarchy-settings-dev|linux-rpi|raspberrypi-bootloader|hyprland|quickshell|sddm|linux-aarch64|uboot-raspberrypi)
           echo "\$arg 1.0-1"
           exit 0
           ;;
@@ -185,6 +185,8 @@ EOF
     fail "the filter documents the hook it guards"
   grep -q -- " -S --needed " "$pacman_log" ||
     fail "the platform set was installed in the same run"
+  grep -q -- "-Rns --noconfirm linux-aarch64 uboot-raspberrypi" "$pacman_log" ||
+    fail "the kernel-conflicting base packages are removed before the set"
   pass "the initramfs hook filter is in place before the kernel transaction"
 else
   echo "ok - initramfs filter run skipped (zstd not installed) # SKIP"
