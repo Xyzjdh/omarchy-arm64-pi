@@ -29,9 +29,9 @@ service, a deterministic root password, and an empty machine-id.
 |---|---|
 | sector 0 | MBR, fixed label-id `0x4f4d5049` (PARTUUID `4f4d5049-01/-02`) |
 | partition 1, 4 MiB offset, 1 GiB, FAT32 | firmware (`start4.elf`, `fixup4.dat`), `kernel8.img`, `initramfs-linux.img`, Pi 5 DTBs (`bcm2712-rpi-5-b.dtb`), overlays, `config.txt`, `cmdline.txt` |
-| partition 2, starts at 4 MiB + 1 GiB, 11 GiB, ext4 | the root filesystem, ~170 packages |
+| partition 2, starts at 4 MiB + 1 GiB, 12 GiB, ext4 | the root filesystem, ~170 packages |
 
-The image is sized to fit 16 GB cards (12 GiB total, 11 GiB root). On the
+The image is sized to fit 16 GB cards (13 GiB total, 12 GiB root). On the
 first boot:
 
 1. `omarchy-pi-resize.service` (`ConditionFirstBoot=yes`, empty machine-id)
@@ -71,7 +71,7 @@ Inputs: `ref` (what to build), `alarm_sha256` (pin the ALARM rootfs
 tarball; the default pins the tarball the port verified at
 `f10903be472e2662e110f0f7bae2750a30914ce3dc0fcd38ec85d3405d8c8967`,
 850,215,189 bytes),
-`root_gib` (default 11; 16 GB cards need <= 12), `validate_mode` (deep or
+`root_gib` (default 12; 16 GB cards need <= 13), `validate_mode` (deep or
 shallow).
 
 The workflow gates on `tools/pi/package-audit.py check` (the package set

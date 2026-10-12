@@ -32,7 +32,7 @@
 #   --alarm-tarball F  use this ALARM rootfs tarball instead of downloading
 #   --alarm-url URL    rootfs tarball URL (default: os.archlinuxarm.org rpi-aarch64)
 #   --alarm-sha256 S   enforce this checksum for the rootfs (pin)
-#   --root-gib N       root partition size (default: 11)
+#   --root-gib N       root partition size (default: 12)
 #   --boot-gib N       boot partition size (default: 1)
 #   --dist-package F   omarchy-dev aarch64 package (default: bundle's dist/)
 #   --qemu             emulate aarch64 on an x86_64 host
@@ -67,7 +67,7 @@ Options:
   --alarm-tarball F  use this ALARM rootfs tarball instead of downloading
   --alarm-url URL    rootfs tarball URL (default: os.archlinuxarm.org rpi-aarch64)
   --alarm-sha256 S   enforce this checksum for the rootfs (pin)
-  --root-gib N       root partition size in GiB (default: 11)
+  --root-gib N       root partition size in GiB (default: 12)
   --boot-gib N       boot partition size in GiB (default: 1)
   --dist-package F   omarchy-dev aarch64 package (default: bundle's dist/)
   --qemu             emulate aarch64 on an x86_64 host
