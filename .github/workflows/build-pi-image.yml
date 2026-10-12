@@ -1,0 +1,90 @@
+name: Build Raspberry Pi 5 image
+
+# Dispatch-only by design: the image is built when someone explicitly asks
+# for a build, and the artifact stays on the run page. This workflow never
+# attaches the image to a release and never publishes it -- that step needs
+# the owner's decision (docs/pi/image-build.md has the policy).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to build from (default: the ref this was dispatched on)"
+        default: ""
+      alarm_sha256:
+        description: "Pin the ALARM rootfs tarball by sha256 (empty = latest; the report records the actual)"
+        default: "9d46ed81e783d6d01164006ea83f8de6d41788a313547d118e1c894f62fe4c67"
+      root_gib:
+        description: "Root partition size in GiB (16 GB cards need <= 12)"
+        default: "11"
+      validate_mode:
+        description: "deep (default: full in-image checks; needs ~25 GiB scratch) or shallow"
+        default: "deep"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-pi-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - name: Check out the port
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # build-package.py versions the package from the commit count
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            mtools dosfstools e2fsprogs xz-utils
+          python3 -m pip install --user zstandard
+
+      - name: Verify the package set against the live repositories
+        run: python3 tools/pi/package-audit.py check
+
+      - name: Build the omarchy-dev aarch64 package
+        run: python3 tools/pi/build-package.py
+
+      - name: Build, validate and compress the image
+        env:
+          ALARM_SHA256: ${{ inputs.alarm_sha256 }}
+          ROOT_GIB: ${{ inputs.root_gib }}
+          VALIDATE_MODE: ${{ inputs.validate_mode }}
+        run: |
+          sudo --preserve-env=ALARM_SHA256,ROOT_GIB,VALIDATE_MODE \
+            bash tools/pi/build-image.sh \
+            --work-dir /mnt/omarchy-image-build \
+            --out-dir "$PWD/build/out" \
+            --alarm-sha256 "$ALARM_SHA256" \
+            --root-gib "${ROOT_GIB:-11}" \
+            --validate "${VALIDATE_MODE:-deep}" \
+            --clean
+
+      - name: Show the build report
+        run: |
+          cat build/out/build-report.txt
+          echo
+          cat build/out/SHA256SUMS
+
+      - name: Upload the image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: omarchy-arm64-pi-image
+          path: |
+            build/out/*.img.xz
+            build/out/SHA256SUMS
+            build/out/build-report.txt
+            build/out/image-packages.txt
+            build/out/omarchy-pi-image-install.log
+            build/out/omarchy-install.log
+            build/out/pacman-image.log
+          if-no-files-found: error
+          retention-days: 30

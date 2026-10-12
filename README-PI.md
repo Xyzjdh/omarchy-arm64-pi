@@ -78,6 +78,7 @@ Full requirements, phases, exit codes and the first-boot flow:
 
 | Read | For |
 |---|---|
+| `docs/pi/image-build.md` | the bootable image pipeline: build, layout, validation, flashing |
 | `docs/pi/installation.md` | installing, dry-run, updates, rollback |
 | `docs/pi/recovery.md` | the recovery catalogue |
 | `docs/pi/troubleshooting.md` | symptoms → fixes |

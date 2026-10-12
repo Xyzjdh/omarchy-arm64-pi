@@ -1,0 +1,17 @@
+[Unit]
+Description=Grow the Omarchy Pi root partition to fill the card (first boot)
+Documentation=file:/usr/share/omarchy/docs/pi/image-build.md
+# A freshly written image ships an empty machine-id, so this runs exactly
+# once: on the first boot after the image reaches a card.
+ConditionFirstBoot=yes
+# The owner form must run after the (quick) resize so its world is final.
+Before=omarchy-provision-owner.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/omarchy-pi/resize-root.sh
+# A skipped or failed resize must never block the desktop from starting.
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

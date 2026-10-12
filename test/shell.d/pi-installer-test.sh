@@ -75,6 +75,19 @@ printf '#!/bin/bash\nprintf "systemctl %s\\n" "\$*" >>%q\nexit 0\n' "$fx/systemc
 chmod +x "$fx/bin/pacman-key" "$fx/bin/systemctl"
 printf '#!/bin/bash\nexit 0\n' >"$fx/bin/curl"
 chmod +x "$fx/bin/curl"
+# A faithful df for the fixture: the installer's disk-space check asks for
+# --output=avail on the fixture root, whose host filesystem is whatever the
+# test machine happens to have. The fixture world reports a disk that always
+# satisfies the check, so the test does not depend on the host's free space.
+cat >"$fx/bin/df" <<'EOF'
+#!/bin/bash
+if [[ "$*" == *--output=avail* ]]; then
+  printf 'Avail\n999\n'
+  exit 0
+fi
+exec /usr/bin/df "$@"
+EOF
+chmod +x "$fx/bin/df"
 
 installer="$ROOT/tools/pi/omarchy-pi-install"
 run_installer() {
