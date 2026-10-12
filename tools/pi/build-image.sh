@@ -335,7 +335,12 @@ chroot_run /bin/bash -s <<'CLEANUP' || die 7 "the untracked-boot cleanup failed"
 set -e
 for f in /boot/*; do
   [[ -e "$f" ]] || continue
-  case "$(basename "$f")" in config.txt | cmdline.txt) continue ;; esac
+  case "$(basename "$f")" in
+    config.txt | cmdline.txt) continue ;;
+    # mkinitcpio generates these; no package ever owns them, but the boot
+    # partition needs them exactly as the kernel's preset built them.
+    initramfs-*.img) continue ;;
+  esac
   if ! pacman -Qo -- "$f" >/dev/null 2>&1; then
     echo "omarchy-image: removing untracked boot file: $f"
     rm -rf -- "$f"
