@@ -1,16 +1,17 @@
 #!/bin/bash -p
 
-# omarchy:summary=Print the hardware platform: x86, aarch64 or aarch64-apple.
+# omarchy:summary=Print the hardware platform: x86, aarch64, aarch64-pi or aarch64-apple.
 
 # Platform names are the CPU architecture, then the hardware family when it
-# needs handling of its own: x86, aarch64 (every ARM machine without one) and
-# aarch64-apple (Apple Silicon). A later family is aarch64-<family>, so
-# "aarch64*" always means ARM (AGENTS.md, Platforms).
+# needs handling of its own: x86, aarch64 (every ARM machine without one),
+# aarch64-apple (Apple Silicon) and aarch64-pi (Raspberry Pi). A later family is
+# aarch64-<family>, so "aarch64*" always means ARM (AGENTS.md, Platforms).
 #
 # ARM laptops have no DMI, so the board identity is the root node of the device
 # tree the firmware hands the kernel: "apple,<model>" from Asahi's m1n1 on every
 # Apple Silicon Mac, "qcom,<soc>" on Snapdragon laptops, which are plain aarch64
-# here and must never pass for a Mac. Each compatible string is a NUL-separated
+# here and must never pass for a Mac, and "brcm,bcm2711"/"brcm,bcm2712" on
+# Raspberry Pis. Each compatible string is a NUL-separated
 # list, and only a token's vendor prefix counts.
 #
 # An image is built away from the machine it will run on, so while this root is
@@ -134,7 +135,7 @@ image_platform() {
     generic-aarch64) platform=aarch64 ;;
     generic) platform=x86 ;;
   esac
-  if [[ ! $platform =~ ^(x86|aarch64|aarch64-apple)$ ]]; then
+  if [[ ! $platform =~ ^(x86|aarch64|aarch64-apple|aarch64-pi)$ ]]; then
     echo "Error: the image manifest $manifest names no known platform: ${platform:-none}" >&2
     return 1
   fi
@@ -160,18 +161,26 @@ for source in "${sources[@]}"; do
 
   apple=0
   qcom=0
+  brcm=0
   mapfile -d '' -t tokens <"$source"
   for token in "${tokens[@]}"; do
     [[ $token == "apple,"* ]] && apple=1
     [[ $token == "qcom,"* ]] && qcom=1
+    [[ $token == "brcm,"* ]] && brcm=1
   done
 
   if (( apple && qcom )); then
     contradiction "$source names both Apple and Qualcomm hardware"
+  elif (( apple && brcm )); then
+    contradiction "$source names both Apple and Raspberry Pi hardware"
+  elif (( qcom && brcm )); then
+    contradiction "$source names both Qualcomm and Raspberry Pi hardware"
   elif (( apple )); then
     found=apple
   elif (( qcom )); then
     found=qcom
+  elif (( brcm )); then
+    found=brcm
   else
     found=none
   fi
@@ -184,10 +193,12 @@ for source in "${sources[@]}"; do
 done
 
 case $vendor in
-  apple | qcom)
+  apple | qcom | brcm)
     [[ $machine == "aarch64" ]] || contradiction "$vendor_source names $vendor hardware but the CPU is $machine"
     if [[ $vendor == "apple" ]]; then
       echo aarch64-apple
+    elif [[ $vendor == "brcm" ]]; then
+      echo aarch64-pi
     else
       echo aarch64
     fi

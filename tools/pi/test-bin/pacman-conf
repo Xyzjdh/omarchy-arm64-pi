@@ -1,0 +1,34 @@
+#!/bin/bash
+# Minimal pacman-conf stand-in for running the upstream test suite on a
+# development host without pacman (a Debian container, say). Implements the one
+# invocation the suite uses: `pacman-conf --config FILE --repo-list`, which
+# prints the repository section names of a pacman.conf in order, [options]
+# excluded. On a machine with real pacman-conf, run the suite without this
+# directory on PATH.
+set -euo pipefail
+
+config=""
+mode=""
+while (($#)); do
+  case $1 in
+    --config)
+      config=$2
+      shift 2
+      ;;
+    --repo-list)
+      mode=repo-list
+      shift
+      ;;
+    *)
+      echo "stub pacman-conf: unsupported argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ $mode != "repo-list" || -z $config || ! -r $config ]]; then
+  echo "stub pacman-conf: needs --config FILE --repo-list" >&2
+  exit 2
+fi
+
+sed -n 's/^\[\([^][]\+\)\]$/\1/p' "$config" | grep -vxF options

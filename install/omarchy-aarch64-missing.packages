@@ -1,0 +1,14 @@
+# Base packages with no aarch64 build under the name Omarchy names them, in any
+# repository Omarchy configures (verified against the live [omarchy], Arch
+# Linux ARM [core] [extra] [alarm] and [aur] databases; see
+# docs/pi/package-compatibility.md). omarchy-pkg-defaults leaves them out of
+# every aarch64 platform's set; their replacements join
+# omarchy-aarch64.packages. Delete an entry the day its name resolves upstream,
+# and its replacement with it.
+nvim
+# Arch renamed the package; Arch Linux ARM still ships neovim without
+# provides=nvim, so the manifest name fails to resolve there. Replacement:
+# neovim (omarchy-aarch64.packages).
+vi
+# No vi package exists in any configured aarch64 repository, and no Omarchy
+# code invokes /usr/bin/vi. Replacement: vim (omarchy-aarch64.packages).

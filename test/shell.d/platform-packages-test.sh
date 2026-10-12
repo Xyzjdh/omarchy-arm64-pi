@@ -18,7 +18,7 @@ names() {
 base=$(names "$ROOT/install/omarchy-base.packages")
 aarch64=$(names "$ROOT/install/omarchy-aarch64.packages")
 
-for platform in aarch64-apple aarch64 x86; do
+for platform in aarch64-apple aarch64 aarch64-pi x86; do
   fake_platform "$work/$platform" "$platform"
   defaults=$(OMARCHY_PROC_ROOT="$work/$platform/proc" PATH="$work/$platform/bin:$ROOT/bin:$PATH" omarchy-pkg-defaults)
   [[ $defaults == "$(omarchy-pkg-defaults "$platform")" ]] ||
@@ -26,9 +26,14 @@ for platform in aarch64-apple aarch64 x86; do
   printf '%s\n' "$defaults" >"$work/$platform.packages"
 
   [[ -z $(sort "$work/$platform.packages" | uniq -d) ]] || fail "$platform: each package is listed once"
-  # aarch64 platforms leave out the base packages only x86_64 builds.
+  # aarch64 platforms leave out the base packages only x86_64 builds, and
+  # those whose names no aarch64 repository resolves (their replacements join
+  # the aarch64 list).
   expected_base=$base
-  [[ $platform == "x86" ]] || expected_base=$(grep -vxF -f <(names "$ROOT/install/omarchy-x86_64-only.packages") <<<"$base")
+  [[ $platform == "x86" ]] || expected_base=$(grep -vxF -f <(
+    names "$ROOT/install/omarchy-x86_64-only.packages"
+    [[ -f $ROOT/install/omarchy-aarch64-missing.packages ]] && names "$ROOT/install/omarchy-aarch64-missing.packages"
+  ) <<<"$base")
   [[ $(head -n "$(wc -l <<<"$expected_base")" "$work/$platform.packages") == "$expected_base" ]] ||
     fail "$platform: the base list comes first, unchanged"
 
@@ -54,6 +59,28 @@ for platform in aarch64-apple aarch64 x86; do
       ! grep -Fxq "$package" "$work/$platform.packages" || fail "$platform: no $package"
     fi
   done
+
+  # The Pi's packages: only the Pi's set carries the board stack.
+  for package in linux-rpi raspberrypi-bootloader rpi5-eeprom; do
+    if [[ $platform == "aarch64-pi" ]]; then
+      grep -Fxq "$package" "$work/$platform.packages" || fail "the Pi adds $package"
+    else
+      ! grep -Fxq "$package" "$work/$platform.packages" || fail "$platform: no $package"
+    fi
+  done
+
+  # The aarch64-wide replacements for base names no repository resolves there:
+  # every ARM set carries them, and no ARM set carries the names they replace.
+  case $platform in
+    aarch64*)
+      for package in neovim vim; do
+        grep -Fxq "$package" "$work/$platform.packages" || fail "$platform replaces with $package"
+      done
+      for package in nvim vi; do
+        ! grep -Fxq "$package" "$work/$platform.packages" || fail "$platform: no unresolved $package"
+      done
+      ;;
+  esac
 done
 pass "each platform composes the base, architecture and platform lists"
 
@@ -63,13 +90,18 @@ tree="$work/tree"
 mkdir -p "$tree/install"
 cp "$ROOT"/install/omarchy-*.packages "$tree/install/"
 printf '# test addition\nexample-board-support\nzram-generator\n' >"$tree/install/omarchy-aarch64-apple.packages"
-for platform in aarch64-apple aarch64 x86; do
+printf '# test addition\nexample-pi-support\n' >"$tree/install/omarchy-aarch64-pi.packages"
+for platform in aarch64-apple aarch64 aarch64-pi x86; do
   defaults=$(OMARCHY_PATH="$tree" omarchy-pkg-defaults "$platform")
   if [[ $platform == "aarch64-apple" ]]; then
     [[ $(tail -n 1 <<<"$defaults") == "example-board-support" ]] || fail "a platform list is added after the others" "$defaults"
     (( $(grep -cx zram-generator <<<"$defaults") == 1 )) || fail "a name in two lists is installed once" "$defaults"
+  elif [[ $platform == "aarch64-pi" ]]; then
+    [[ $(tail -n 1 <<<"$defaults") == "example-pi-support" ]] || fail "a platform list is added after the others" "$defaults"
+    (( $(grep -cx zram-generator <<<"$defaults") == 1 )) || fail "a name in two lists is installed once" "$defaults"
   else
     ! grep -Fxq example-board-support <<<"$defaults" || fail "$platform: another platform's list stays out"
+    ! grep -Fxq example-pi-support <<<"$defaults" || fail "$platform: another platform's list stays out"
   fi
 done
 pass "a platform list joins only its own platform's set"

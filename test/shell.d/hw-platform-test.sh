@@ -8,7 +8,7 @@ detector="$ROOT/bin/omarchy-hw-platform"
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
-for platform in aarch64-apple aarch64 x86; do
+for platform in aarch64-apple aarch64 aarch64-pi x86; do
   fake_platform "$test_tmp/$platform" "$platform"
 done
 
@@ -22,7 +22,7 @@ fi
 if (( EUID == 0 )) || unshare --user --map-root-user true 2>/dev/null; then
   live=$("${root_runner[@]}" "$detector") || fail "root detects the live platform"
   [[ $live =~ ^(aarch64-apple|aarch64|x86)$ ]] || fail "root detects the live platform" "live: $live"
-  for platform in aarch64-apple aarch64 x86; do
+  for platform in aarch64-apple aarch64 aarch64-pi x86; do
     fixture="$test_tmp/$platform"
     if [[ -f $fixture/proc/device-tree/compatible ]]; then
       mkdir -p "$fixture/sys/firmware/devicetree/base"
@@ -41,18 +41,18 @@ fi
 
 # -p in the shebang is what keeps exported functions and BASH_ENV out, so an
 # ordinary Bash launch with a decoy -p argument is refused before it reads anything.
-for command in omarchy-hw-platform omarchy-hw-aarch64-apple omarchy-hw-apple-silicon; do
+for command in omarchy-hw-platform omarchy-hw-aarch64-apple omarchy-hw-apple-silicon omarchy-hw-aarch64-pi; do
   if /usr/bin/bash "$ROOT/bin/$command" -p >/dev/null 2>"$test_tmp/error"; then
     fail "$command refuses an ordinary Bash launch"
   fi
   grep -Fq "Refusing an unsafe Bash startup" "$test_tmp/error" || fail "$command explains the refusal" "$(cat "$test_tmp/error")"
 done
-pass "the detector and the Apple predicate refuse an ordinary Bash launch with a decoy -p"
+pass "the detector and the family predicates refuse an ordinary Bash launch with a decoy -p"
 
 require_platform_fixtures "the platform fixtures"
 
-# The three platforms every caller is written against.
-for platform in aarch64-apple aarch64 x86; do
+# The platforms every caller is written against.
+for platform in aarch64-apple aarch64 aarch64-pi x86; do
   fixture="$test_tmp/$platform"
   actual=$(OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" "$detector") ||
     fail "the $platform fixture is detected"
@@ -65,7 +65,15 @@ for platform in aarch64-apple aarch64 x86; do
   else
     (( apple_status != 0 )) || fail "the Apple predicate rejects the $platform fixture"
   fi
-  pass "the $platform fixture is detected and the Apple predicate agrees"
+
+  pi_status=0
+  OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-aarch64-pi" || pi_status=$?
+  if [[ $platform == "aarch64-pi" ]]; then
+    (( pi_status == 0 )) || fail "the Pi predicate accepts the Raspberry Pi fixture"
+  else
+    (( pi_status != 0 )) || fail "the Pi predicate rejects the $platform fixture"
+  fi
+  pass "the $platform fixture is detected and the family predicates agree"
 done
 
 # Systemd and the shell run the predicate by absolute path with whatever PATH
@@ -138,16 +146,20 @@ pass "real Apple and Snapdragon device trees are recognised"
 
 write_tree qemu-virt proc linux,dummy-virt
 write_tree raspberry-pi proc raspberrypi,5-model-b brcm,bcm2712
+write_tree raspberry-pi-4 proc raspberrypi,4-model-b brcm,bcm2711
+write_tree raspberry-pi-cm5 proc raspberrypi,cm5-cm5io brcm,bcm2712
 mkdir -p "$test_tmp/cases/acpi/proc" "$test_tmp/cases/acpi/sys"
 expect qemu-virt aarch64 aarch64 "a QEMU virt board is plain aarch64"
-expect raspberry-pi aarch64 aarch64 "a Raspberry Pi is plain aarch64"
+expect raspberry-pi aarch64 aarch64-pi "a Raspberry Pi 5 is aarch64-pi"
+expect raspberry-pi-4 aarch64 aarch64-pi "a Raspberry Pi 4 is aarch64-pi"
+expect raspberry-pi-cm5 aarch64 aarch64-pi "a Compute Module 5 is aarch64-pi"
 expect acpi aarch64 aarch64 "an aarch64 machine without a device tree is plain aarch64"
 expect acpi x86_64 x86 "an x86 machine without a device tree is x86"
-pass "unknown aarch64 and x86 machines need no family"
+pass "unknown aarch64 and x86 machines need no family, and every Pi model has one"
 
 # Only a token's vendor prefix identifies the board; the old detector matched
 # "apple," anywhere in the file.
-write_tree substring proc pineapple,board acmeqcom,soc vendor,apple,x vendor,qcom,y
+write_tree substring proc pineapple,board acmeqcom,soc vendor,apple,x vendor,qcom,y seaabrcm,soc
 expect substring aarch64 aarch64 "vendor names inside other tokens do not identify the board"
 pass "only a token's vendor prefix identifies the board"
 
@@ -163,6 +175,10 @@ pass "sysfs is the fallback for the device tree"
 
 write_tree both-vendors proc apple,j314s qcom,x1e80100
 expect_contradiction both-vendors aarch64 "a device tree naming Apple and Qualcomm fails"
+write_tree apple-vs-pi proc apple,j314s brcm,bcm2712
+expect_contradiction apple-vs-pi aarch64 "a device tree naming Apple and Raspberry Pi fails"
+write_tree qcom-vs-pi proc qcom,x1e80100 brcm,bcm2712
+expect_contradiction qcom-vs-pi aarch64 "a device tree naming Qualcomm and Raspberry Pi fails"
 write_tree sources-disagree proc apple,j314s apple,t6000 apple,arm-platform
 write_tree sources-disagree sys lenovo,yoga-slim7x qcom,x1e80100
 expect_contradiction sources-disagree aarch64 "proc and sysfs naming different vendors fails"
@@ -189,7 +205,7 @@ pass "an unreadable CPU architecture fails instead of guessing generic"
 
 # The architecture predicates answer from the CPU alone: aarch64 covers every
 # ARM family, Apple Silicon included, and x86 none of them.
-for platform in x86 aarch64 aarch64-apple; do
+for platform in x86 aarch64 aarch64-apple aarch64-pi; do
   fake_platform "$test_tmp/arch-$platform" "$platform"
   arch_path="$test_tmp/arch-$platform/bin:$ROOT/bin:$PATH"
   if [[ $platform == "x86" ]]; then

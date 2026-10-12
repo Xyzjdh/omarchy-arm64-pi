@@ -1,0 +1,14 @@
+# Raspberry Pi additions, composed after omarchy-base.packages and
+# omarchy-aarch64.packages (omarchy-pkg-defaults aarch64-pi). The kernel and
+# boot chain come with the machine's Arch Linux ARM image, whose firmware
+# partition this port never writes: these packages keep them current from the
+# repositories alone. linux-rpi is the 4k-page kernel; linux-rpi-16k trades
+# compatibility (Electron builds, Wine, box64 targets) for throughput and is
+# left to the owner. rpi5-eeprom ships the EEPROM update tooling only; nothing
+# here runs it against the machine.
+linux-rpi
+raspberrypi-bootloader
+raspberrypi-overlays
+raspberrypi-utils
+firmware-raspberrypi
+rpi5-eeprom

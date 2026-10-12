@@ -15,7 +15,7 @@ trap 'rm -rf "$work"' EXIT
 export OMARCHY_PATH="$ROOT"
 source "$ROOT/install/helpers/pacman.sh"
 
-platforms="x86 aarch64 aarch64-apple"
+platforms="x86 aarch64 aarch64-apple aarch64-pi"
 # aarch64 has edge alone: stable and rc there would install the release line,
 # which has no aarch64 support.
 channels_for() {
@@ -27,11 +27,14 @@ channels_for() {
 [[ $(omarchy_pacman_templates x86) == "$ROOT/default/pacman" ]] || fail "x86 keeps its templates where they were"
 [[ $(omarchy_pacman_templates aarch64) == "$ROOT/default/pacman/aarch64" ]] || fail "plain aarch64 uses the aarch64 templates"
 [[ $(omarchy_pacman_templates aarch64-apple) == "$ROOT/default/pacman/aarch64-apple" ]] || fail "Apple Silicon uses its own templates"
+# The Pi needs exactly the generic aarch64 repository set, so it reuses those
+# templates rather than a directory of its own.
+[[ $(omarchy_pacman_templates aarch64-pi) == "$ROOT/default/pacman/aarch64" ]] || fail "the Raspberry Pi reuses the aarch64 templates"
 ! omarchy_pacman_templates riscv 2>/dev/null || fail "an unknown platform has no templates"
 pass "each platform's templates sit in a directory of their own, x86_64's where they always were"
 
 [[ $(omarchy_pacman_default_channel x86) == stable ]] || fail "x86 defaults to stable"
-for platform in aarch64 aarch64-apple; do
+for platform in aarch64 aarch64-apple aarch64-pi; do
   [[ $(omarchy_pacman_default_channel "$platform") == edge ]] || fail "$platform defaults to edge"
 done
 ! omarchy_pacman_default_channel riscv 2>/dev/null || fail "an unknown platform has no default channel"
@@ -57,7 +60,7 @@ for platform in $platforms; do
     list=$(repos "$templates" "$channel") || fail "$platform $channel: pacman reads the template"
     case $platform in
       x86) expected="omarchy core extra multilib " ;;
-      aarch64) expected="omarchy core extra alarm aur " ;;
+      aarch64 | aarch64-pi) expected="omarchy core extra alarm aur " ;;
       aarch64-apple) expected="omarchy asahi-alarm core extra alarm aur " ;;
     esac
     [[ $list == "$expected" ]] || fail "$platform $channel: repositories in order" "$list"
@@ -122,7 +125,7 @@ events() {
 for platform in $platforms; do
   case $platform in
     x86) templates=$SUDO_TEST_ROOT/default/pacman ;;
-    aarch64) templates=$SUDO_TEST_ROOT/default/pacman/aarch64 ;;
+    aarch64 | aarch64-pi) templates=$SUDO_TEST_ROOT/default/pacman/aarch64 ;;
     aarch64-apple) templates=$SUDO_TEST_ROOT/default/pacman/aarch64-apple ;;
   esac
   # No channel named refreshes to the platform's default one.
