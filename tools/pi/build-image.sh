@@ -259,10 +259,16 @@ chroot_run /bin/bash -e -c 'pacman -Sy --noconfirm --needed pacman zstd' ||
 
 # --- 5. the port's own installer, in the chroot --------------------------------
 log "chroot: running the Omarchy Pi installer (the port's tested path)"
-chroot_run /bin/bash -e /opt/omarchy-port/tools/pi/omarchy-pi-install \
+if ! chroot_run /bin/bash -e /opt/omarchy-port/tools/pi/omarchy-pi-install \
   --bundle-dir /opt/omarchy-port \
-  --log-file /var/log/omarchy-pi-image-install.log ||
+  --log-file /var/log/omarchy-pi-image-install.log; then
+  echo "build-image: installer failed; its log tail:" >&2
+  tail -n 40 "$ROOTFS/var/log/omarchy-pi-image-install.log" >&2 2>/dev/null || true
+  echo "build-image: omarchy-apply-system's log tail (if it ran):" >&2
+  tail -n 60 "$ROOTFS/var/log/omarchy-install.log" >&2 2>/dev/null || true
+  cp -f "$ROOTFS/var/log/omarchy-install.log" "$OUT_DIR/" 2>/dev/null || true
   die 6 "the Omarchy installer failed inside the chroot (log: $WORK_DIR/installer.log)"
+fi
 
 # --- 6. image layer on top of the installed system -----------------------------
 log "chroot: applying the image layer (boot files, first-boot resize, identity)"
