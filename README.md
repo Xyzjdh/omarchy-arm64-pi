@@ -72,6 +72,13 @@ The manual lives in [`manual/`](manual/), which is its authoritative source.
 - [Dual Boot Install](manual/50-dual-boot-install.md)
 - [Unattended Installs](manual/51-unattended-installs.md)
 
+## Raspberry Pi 5 (ARM64)
+
+A platform port for the Raspberry Pi 5 lives on the `arm64-pi` branch and
+[`README-PI.md`](README-PI.md): the `aarch64-pi` platform family, a Pi
+package manifest, and an installer for an already-booted Arch Linux ARM
+system.
+
 ## License
 
 Omarchy is released under the [MIT License](https://opensource.org/licenses/MIT).
