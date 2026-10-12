@@ -48,7 +48,9 @@ jobs:
           python3 -m pip install --user zstandard
 
       - name: Verify the package set against the live repositories
-        run: python3 tools/pi/package-audit.py check
+        run: |
+          python3 tools/pi/package-audit.py fetch
+          python3 tools/pi/package-audit.py check
 
       - name: Build the omarchy-dev aarch64 package
         run: python3 tools/pi/build-package.py
