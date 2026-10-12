@@ -1,0 +1,481 @@
+#!/bin/bash
+# omarchy-pi-install: install the Omarchy aarch64-pi desktop on an already-booted
+# Raspberry Pi Arch Linux ARM system.
+#
+# The supported starting point is an Arch Linux ARM aarch64 image for the
+# Raspberry Pi (5), booted and networked, with its firmware boot chain working:
+# https://archlinuxarm.org/platforms/armv8/broadcom/raspberry-pi-5
+# The installer never formats, repartitions, writes the boot firmware, or
+# touches the EEPROM. It backs up and (on request) restores the pacman
+# configuration it replaces, and every phase is idempotent: a re-run continues
+# or verifies rather than repeating itself.
+#
+# Phases: env-check, backup, repos, keyring, packages, system, provisioning,
+# verify. Each records itself in /var/lib/omarchy-pi-install/state; a phase
+# already recorded is skipped unless --force. --dry-run runs the read-only
+# checks (including real package resolution through a private pacman database)
+# and changes nothing.
+#
+# Exit codes: 0 success; 1 usage; 2 wrong machine (not a Raspberry Pi aarch64);
+# 3 unsupported base or unreachable repositories; 5 insufficient disk; 6 not
+# root; 7 package failure; 8 system setup failure.
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Options and state
+# ---------------------------------------------------------------------------
+DRY_RUN=0
+VERIFY_ONLY=0
+RESTORE_PACMAN=0
+FORCE=0
+LOG_FILE=""
+CHANNEL=edge
+BUNDLE_DIR=""
+
+# Unprivileged test runs may prefix every system path this installer touches
+# through OMARCHY_PI_ROOT (a fixture root, the way omarchy-hw-platform's
+# fixture roots work); a root run ignores the variable entirely, so a real
+# install always addresses the live system whatever its environment says.
+PI_ROOT=${OMARCHY_PI_ROOT:-}
+if (( EUID == 0 )); then
+  PI_ROOT=""
+fi
+SYSTEM_DIR="$PI_ROOT/etc/systemd/system"
+PROVISIONING_DIR="$PI_ROOT/var/lib/omarchy/provisioning"
+OMARCHY_TREE="$PI_ROOT/usr/share/omarchy"
+
+usage() {
+  cat <<USAGE
+Usage: omarchy-pi-install [options]
+
+Installs Omarchy (aarch64-pi platform) onto this Raspberry Pi's Arch Linux ARM
+system, then arms first-boot owner provisioning. Reboot when it finishes: the
+owner form runs on tty1 and creates your user.
+
+Options:
+  --dry-run          validate everything, change nothing (env, repositories,
+                     keyring availability, package resolution in a private
+                     pacman database)
+  --verify           post-install verification only (read-only, works as any
+                     user)
+  --restore-pacman   restore /etc/pacman.conf and /etc/pacman.d/mirrorlist
+                     from the installer's backup and exit
+  --force            rerun phases already recorded as complete
+  --bundle-dir DIR   port bundle root holding bin/, install/, default/ and
+                     dist/ (default: the repository this script lives in)
+  --log-file FILE    default $LOG_FILE
+  -h, --help         this help
+
+Exit codes: 0 ok; 1 usage; 2 wrong machine; 3 unsupported base or unreachable
+repositories; 5 insufficient disk; 6 not root; 7 package failure; 8 system
+setup failure.
+USAGE
+}
+
+while (($#)); do
+  case $1 in
+    --dry-run) DRY_RUN=1 ;;
+    --verify) VERIFY_ONLY=1 ;;
+    --restore-pacman) RESTORE_PACMAN=1 ;;
+    --force) FORCE=1 ;;
+    --bundle-dir) BUNDLE_DIR=${2:-}; shift ;;
+    --log-file) LOG_FILE=${2:-}; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+  esac
+  shift
+done
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+BUNDLE_DIR=${BUNDLE_DIR:-$(cd -- "$script_dir/../.." && pwd)}
+STATE_DIR="$PI_ROOT/var/lib/omarchy-pi-install"
+LOG_FILE=${LOG_FILE:-$PI_ROOT/var/log/omarchy-pi-install.log}
+OMARCHY_KEYRING_URL_ROOT=https://pkgs.omarchy.org/edge/aarch64
+ALARM_MIRROR=https://arm-mirror.omarchy.org
+REQUIRED_FREE_GB=8
+
+log() {
+  if [[ -n $LOG_FILE ]]; then
+    printf '%s\n' "$*" | tee -a "$LOG_FILE"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+warn() { log "Warning: $*"; }
+die() { local code=$1; shift; log "Error: $*"; log "Installer exiting with code $code. The log is at $LOG_FILE."; exit "$code"; }
+
+phase_done() { grep -qxF "phase=$1 done" "$STATE_DIR/state" 2>/dev/null; }
+phase_mark() {
+  (( DRY_RUN )) && return 0
+  mkdir -p "$STATE_DIR"
+  if ! phase_done "$1"; then
+    printf 'phase=%s done\n' "$1" >>"$STATE_DIR/state"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Phase: environment check
+# ---------------------------------------------------------------------------
+phase_env_check() {
+  log "== Phase: environment check =="
+
+  [[ $(uname -m) == "aarch64" ]] ||
+    die 2 "this machine is $(uname -m); the Pi installer needs aarch64"
+
+  if ! command -v pacman >/dev/null; then
+    die 3 "pacman not found; the supported base is Arch Linux ARM (archlinuxarm.org)"
+  fi
+
+  [[ -f $BUNDLE_DIR/bin/omarchy-hw-platform && -d $BUNDLE_DIR/install ]] ||
+    die 1 "bundle incomplete at $BUNDLE_DIR (need bin/, install/, default/, dist/)"
+
+  local platform
+  platform=$(PATH="$BUNDLE_DIR/bin:$PATH" omarchy-hw-platform) ||
+    die 2 "the platform detector refused to identify this machine"
+  [[ $platform == "aarch64-pi" ]] ||
+    die 2 "this machine reports platform '$platform'; the Pi installer only installs on the Raspberry Pi family"
+  log "Platform: $platform (Raspberry Pi, device-tree brcm family)."
+
+  # The Arch Linux ARM image's boot chain: present but never written by us.
+  if [[ ! -d /boot/firmware ]]; then
+    warn "/boot/firmware not found: this does not look like an Arch Linux ARM Raspberry Pi image. Continuing; the installer will not touch any boot files either way."
+  fi
+
+  local free_gb
+  free_gb=$(df -BG --output=avail "${PI_ROOT:-/}" | tail -1 | tr -dc '0-9')
+  (( free_gb >= REQUIRED_FREE_GB )) ||
+    die 5 "only ${free_gb} GiB free on /; the full Omarchy desktop needs at least ${REQUIRED_FREE_GB} GiB"
+  log "Disk: ${free_gb} GiB free on / (need ${REQUIRED_FREE_GB} GiB)."
+
+  for url in "$ALARM_MIRROR/aarch64/core/core.db" "$OMARCHY_KEYRING_URL_ROOT/omarchy.db"; do
+    if command -v curl >/dev/null; then
+      curl -sfIL -m 30 "$url" >/dev/null ||
+        die 3 "repository unreachable: $url"
+    elif command -v wget >/dev/null; then
+      wget -q --spider -T 30 "$url" ||
+        die 3 "repository unreachable: $url"
+    else
+      die 3 "neither curl nor wget is available to reach the repositories"
+    fi
+  done
+  log "Network: Omarchy and Arch Linux ARM repositories reachable."
+
+  # The locally built omarchy-dev package this install will deploy.
+  local -a packages
+  mapfile -t packages < <(compgen -G "$BUNDLE_DIR/dist/omarchy-dev-*.pkg.tar.zst")
+  (( ${#packages[@]} == 1 )) ||
+    die 1 "expected exactly one $BUNDLE_DIR/dist/omarchy-dev-*-aarch64.pkg.tar.zst (build it: python3 tools/pi/build-package.py)"
+  LOCAL_PACKAGE=${packages[0]}
+  log "Bundle package: $(basename "$LOCAL_PACKAGE")"
+  phase_mark env-check
+}
+
+# ---------------------------------------------------------------------------
+# Phase: backup of the machine's pacman configuration
+# ---------------------------------------------------------------------------
+phase_backup() {
+  phase_done backup && { log "== Phase: backup (already done) =="; return 0; }
+  log "== Phase: backup pacman configuration =="
+  if (( DRY_RUN )); then
+    log "Dry-run: would back up $PI_ROOT/etc/pacman.conf and $PI_ROOT/etc/pacman.d/mirrorlist"       "to $STATE_DIR when they are not already Omarchy's."
+    return 0
+  fi
+  mkdir -p "$STATE_DIR"
+  local backed_up=0
+  if [[ -f $PI_ROOT/etc/pacman.conf ]] && ! grep -q '^\[omarchy\]' "$PI_ROOT/etc/pacman.conf"; then
+    cp -a "$PI_ROOT/etc/pacman.conf" "$STATE_DIR/pacman.conf.bak"
+    sha256sum "$PI_ROOT/etc/pacman.conf" >>"$STATE_DIR/backup.sums"
+    backed_up=1
+    log "Backed up $PI_ROOT/etc/pacman.conf to $STATE_DIR/pacman.conf.bak"
+  else
+    log "/etc/pacman.conf already carries the [omarchy] repository (or is absent); no backup needed."
+  fi
+  if [[ -f $PI_ROOT/etc/pacman.d/mirrorlist ]] && ! grep -q 'arm-mirror.omarchy.org' "$PI_ROOT/etc/pacman.d/mirrorlist"; then
+    cp -a "$PI_ROOT/etc/pacman.d/mirrorlist" "$STATE_DIR/mirrorlist.bak"
+    sha256sum "$PI_ROOT/etc/pacman.d/mirrorlist" >>"$STATE_DIR/backup.sums"
+    backed_up=1
+    log "Backed up $PI_ROOT/etc/pacman.d/mirrorlist to $STATE_DIR/mirrorlist.bak"
+  else
+    log "/etc/pacman.d/mirrorlist already points at Omarchy's ALARM mirror (or is absent); no backup needed."
+  fi
+  (( backed_up )) && log "Restore any time with: $0 --restore-pacman"
+  phase_mark backup
+}
+
+restore_pacman() {
+  local restored=0
+  for f in pacman.conf mirrorlist; do
+    if [[ -f $STATE_DIR/$f.bak ]]; then
+      if [[ $f == pacman.conf ]]; then
+        mkdir -p "$PI_ROOT/etc"
+        install -m 0644 "$STATE_DIR/$f.bak" "$PI_ROOT/etc/pacman.conf"
+      else
+        mkdir -p "$PI_ROOT/etc/pacman.d"
+        install -m 0644 "$STATE_DIR/$f.bak" "$PI_ROOT/etc/pacman.d/mirrorlist"
+      fi
+      restored=1
+      log "Restored $f from $STATE_DIR/$f.bak"
+    fi
+  done
+  (( restored )) || log "Nothing to restore: no backups in $STATE_DIR."
+  log "Note: restoring the pacman configuration does not remove installed packages."
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Phase: repositories and keyrings
+# ---------------------------------------------------------------------------
+phase_repos() {
+  phase_done repos && { log "== Phase: repositories (already done) =="; return 0; }
+  log "== Phase: repositories and keyrings =="
+
+  local templates=$BUNDLE_DIR/default/pacman/aarch64
+  [[ -f $templates/pacman-$CHANNEL.conf && -f $templates/mirrorlist-$CHANNEL ]] ||
+    die 1 "missing $templates/pacman-$CHANNEL.conf or mirrorlist-$CHANNEL in the bundle"
+
+  if (( DRY_RUN )); then
+    log "Dry-run: would copy $templates/pacman-$CHANNEL.conf -> /etc/pacman.conf"
+    log "Dry-run: would copy $templates/mirrorlist-$CHANNEL -> /etc/pacman.d/mirrorlist"
+    return 0
+  fi
+
+  mkdir -p "$PI_ROOT/etc/pacman.d"
+  install -m 0644 "$templates/pacman-$CHANNEL.conf" "$PI_ROOT/etc/pacman.conf"
+  install -m 0644 "$templates/mirrorlist-$CHANNEL" "$PI_ROOT/etc/pacman.d/mirrorlist"
+  log "Installed the aarch64 edge pacman configuration ([omarchy] + Arch Linux ARM core/extra/alarm/aur)."
+
+  # Trust: the [omarchy] repository's keyring package, fetched over HTTPS and
+  # checksum-verified against the repository database fetched over HTTPS, then
+  # installed as a local file (LocalFileSigLevel=Optional in the template, as
+  # upstream configures) and populated into pacman's keyring.
+  local tmp keyring_file keyring_sha
+  tmp=$(mktemp -d)
+  if ! curl -sfL -m 120 -o "$tmp/omarchy.db" "$OMARCHY_KEYRING_URL_ROOT/omarchy.db"; then
+    rm -rf "$tmp"
+    die 3 "could not download the [omarchy] repository database"
+  fi
+  keyring_file=$(tar --zstd -xOf "$tmp/omarchy.db" omarchy-keyring-*/desc 2>/dev/null |
+    awk '/^%FILENAME%$/{getline; print; exit}') ||
+    { rm -rf "$tmp"; die 3 "could not read omarchy-keyring's filename from the repository database"; }
+  keyring_sha=$(tar --zstd -xOf "$tmp/omarchy.db" omarchy-keyring-*/desc 2>/dev/null |
+    awk '/^%SHA256SUM%$/{getline; print; exit}')
+  [[ -n $keyring_file && -n $keyring_sha ]] ||
+    { rm -rf "$tmp"; die 3 "the [omarchy] repository database names no checksummed omarchy-keyring"; }
+  log "Keyring package: $keyring_file (sha256 $keyring_sha)"
+  curl -sfL -m 300 -o "$tmp/$keyring_file" "$OMARCHY_KEYRING_URL_ROOT/$keyring_file" ||
+    { rm -rf "$tmp"; die 3 "could not download omarchy-keyring"; }
+  echo "$keyring_sha  $tmp/$keyring_file" | sha256sum -c - >/dev/null 2>&1 ||
+    { rm -rf "$tmp"; die 7 "omarchy-keyring failed its checksum; refusing to trust the repository"; }
+  pacman -U --noconfirm "$tmp/$keyring_file" >/dev/null ||
+    { rm -rf "$tmp"; die 7 "omarchy-keyring failed to install"; }
+  rm -rf "$tmp"
+
+  pacman-key --populate archlinuxarm omarchy >/dev/null 2>&1 ||
+    warn "pacman-key --populate did not complete cleanly; continuing (the base image's keyring is usually already trusted)."
+  log "Keyrings populated: archlinuxarm, omarchy."
+
+  pacman -Sy --noconfirm >/dev/null ||
+    die 3 "pacman -Sy failed against the new repositories"
+  log "Repository databases refreshed."
+  phase_mark repos
+}
+
+# ---------------------------------------------------------------------------
+# Phase: packages
+# ---------------------------------------------------------------------------
+composed_package_set() {
+  # Prefer the deployed tree (proves the installed tooling works); fall back
+  # to the bundle's copy for --dry-run before anything is installed.
+  if [[ -x /usr/share/omarchy/bin/omarchy-pkg-defaults ]]; then
+    PATH="/usr/share/omarchy/bin:$PATH" omarchy-pkg-defaults aarch64-pi
+  else
+    OMARCHY_PATH=$BUNDLE_DIR PATH="$BUNDLE_DIR/bin:$PATH" omarchy-pkg-defaults aarch64-pi
+  fi
+}
+
+phase_packages() {
+  phase_done packages && { log "== Phase: packages (already done) =="; return 0; }
+  log "== Phase: packages =="
+
+  local -a set
+  mapfile -t set < <(composed_package_set) || true
+  (( ${#set[@]} > 0 )) || die 7 "omarchy-pkg-defaults composed an empty aarch64-pi set"
+  local count=${#set[@]}
+  log "Platform package set: $count packages."
+
+  if (( DRY_RUN )); then
+    # Resolve the whole transaction against a private database so nothing on
+    # the system changes, and print what a real run would install.
+    local tmp_conf tmp_db
+    tmp_conf=$(mktemp)
+    tmp_db=$(mktemp -d)
+    sed "s|^Include = /etc/pacman.d/mirrorlist|Include = $BUNDLE_DIR/default/pacman/aarch64/mirrorlist-$CHANNEL|" \
+      "$BUNDLE_DIR/default/pacman/aarch64/pacman-$CHANNEL.conf" >"$tmp_conf"
+    log "Dry-run: resolving the transaction in a private pacman database..."
+    if pacman -S --needed --noconfirm --print --config "$tmp_conf" --dbpath "$tmp_db" "${set[@]}" >/dev/null; then
+      log "Dry-run: all $count packages resolve against [omarchy] + Arch Linux ARM."
+    else
+      rm -f "$tmp_conf"; rm -rf "$tmp_db"
+      die 7 "the aarch64-pi package set does not resolve; run tools/pi/package-audit.py check"
+    fi
+    rm -f "$tmp_conf"; rm -rf "$tmp_db"
+    log "Dry-run: would install $LOCAL_PACKAGE with pacman -U, then the set above."
+    return 0
+  fi
+
+  pacman -U --noconfirm "$LOCAL_PACKAGE" ||
+    die 7 "pacman -U $(basename "$LOCAL_PACKAGE") failed (see $LOG_FILE)"
+  log "Installed $(basename "$LOCAL_PACKAGE")."
+
+  pacman -S --needed --noconfirm "${set[@]}" ||
+    die 7 "package installation failed (see $LOG_FILE and /var/log/pacman.log)"
+  log "Installed the $count package aarch64-pi set."
+  phase_mark packages
+}
+
+# ---------------------------------------------------------------------------
+# Phase: system setup (upstream's own machinery)
+# ---------------------------------------------------------------------------
+phase_system() {
+  phase_done system && { log "== Phase: system setup (already done) =="; return 0; }
+  log "== Phase: system setup (omarchy-apply-system) =="
+
+  (( DRY_RUN )) && { log "Dry-run: would run omarchy-apply-system --defer-provisioning --first-install"; return 0; }
+
+  export OMARCHY_PATH=$OMARCHY_TREE
+  export OMARCHY_INSTALL=$OMARCHY_TREE/install
+  "$OMARCHY_TREE/bin/omarchy-apply-system" --defer-provisioning --first-install ||
+    die 8 "omarchy-apply-system failed; see /var/log/omarchy-install.log"
+  log "System setup complete (configuration, hardware, login manager, services)."
+  phase_mark system
+}
+
+# ---------------------------------------------------------------------------
+# Phase: first-boot owner provisioning
+# ---------------------------------------------------------------------------
+phase_provisioning() {
+  phase_done provisioning && { log "== Phase: provisioning (already done) =="; return 0; }
+  log "== Phase: arm first-boot owner provisioning =="
+
+  (( DRY_RUN )) && { log "Dry-run: would arm omarchy-provision-owner for the first boot."; return 0; }
+
+  local unit_src=$OMARCHY_TREE/install/provisioning/omarchy-provision-owner.service
+  mkdir -p "$PROVISIONING_DIR"
+  [[ -f $unit_src ]] || die 8 "missing $unit_src in the installed tree"
+  install -Dm644 "$unit_src" "$SYSTEM_DIR/omarchy-provision-owner.service"
+  mkdir -p "$SYSTEM_DIR/multi-user.target.wants"
+  ln -sfn "$SYSTEM_DIR/omarchy-provision-owner.service" \
+    "$SYSTEM_DIR/multi-user.target.wants/omarchy-provision-owner.service"
+  touch "$PROVISIONING_DIR/pending"
+  systemctl daemon-reload
+  log "Provisioning armed: the owner form runs on tty1 at the next boot and creates your user."
+  phase_mark provisioning
+}
+
+# ---------------------------------------------------------------------------
+# Phase: verification
+# ---------------------------------------------------------------------------
+phase_verify() {
+  log "== Phase: verification =="
+  local failures=0
+
+  local platform
+  platform=$(PATH="$OMARCHY_TREE/bin:$PATH" omarchy-hw-platform 2>/dev/null) || platform=unreadable
+  if [[ $platform == "aarch64-pi" ]]; then
+    log "ok: platform is aarch64-pi"
+  else
+    log "FAIL: platform is '$platform'"
+    failures=1
+  fi
+
+  for package in omarchy-dev omarchy-settings-dev linux-rpi raspberrypi-bootloader hyprland quickshell sddm; do
+    if pacman -Q "$package" >/dev/null 2>&1; then
+      log "ok: $package installed ($(pacman -Q "$package" | cut -d' ' -f2))"
+    else
+      log "FAIL: $package is not installed"
+      failures=1
+    fi
+  done
+
+  if grep -q '^\[omarchy\]' "$PI_ROOT/etc/pacman.conf" 2>/dev/null; then
+    log "ok: [omarchy] repository configured"
+  else
+    log "FAIL: [omarchy] missing from /etc/pacman.conf"
+    failures=1
+  fi
+
+  if [[ -f $PROVISIONING_DIR/pending ]]; then
+    log "ok: first-boot provisioning is armed"
+  else
+    log "FAIL: /var/lib/omarchy/provisioning/pending is missing"
+    failures=1
+  fi
+
+  if systemctl is-enabled sddm >/dev/null 2>&1; then
+    log "ok: sddm login manager is enabled"
+  else
+    log "FAIL: sddm is not enabled"
+    failures=1
+  fi
+
+  (( failures )) && die 8 "verification failed"
+  log "Verification passed. Reboot to start the owner setup on tty1."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  if (( RESTORE_PACMAN )); then
+    if (( EUID != 0 )) && [[ -z $PI_ROOT ]]; then
+      die 6 "--restore-pacman must run as root"
+    fi
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || LOG_FILE=/dev/null
+    restore_pacman
+  fi
+
+  if (( VERIFY_ONLY )); then
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || LOG_FILE=/dev/null
+    phase_verify
+    exit 0
+  fi
+
+  if (( EUID != 0 )) && [[ -z $PI_ROOT ]]; then
+    die 6 "omarchy-pi-install must run as root (it installs packages and configures the system); only --verify runs unprivileged"
+  fi
+  if (( DRY_RUN )); then
+    # A dry run changes nothing, which includes not creating a log file.
+    LOG_FILE=""
+  fi
+  [[ -z $LOG_FILE ]] || mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || LOG_FILE=/dev/null
+  log "Omarchy aarch64-pi installer starting $(date -u +'%Y-%m-%d %H:%M UTC')"
+  log "Bundle: $BUNDLE_DIR"
+  log "Log: $LOG_FILE"
+
+  if (( FORCE )); then
+    rm -f "$STATE_DIR/state"
+    log "--force: phase records cleared; every phase will run."
+  fi
+
+  if (( DRY_RUN )); then
+    log "*** DRY RUN: nothing will be changed. ***"
+  fi
+
+  phase_env_check
+  phase_backup
+  phase_repos
+  phase_packages
+  phase_system
+  phase_provisioning
+
+  if (( DRY_RUN )); then
+    log "*** DRY RUN complete: all checks passed and nothing was changed. ***"
+    exit 0
+  fi
+
+  phase_verify
+  log "Omarchy aarch64-pi install finished $(date -u +'%Y-%m-%d %H:%M UTC'). Reboot to meet the owner setup."
+}
+
+main "$@"

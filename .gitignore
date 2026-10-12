@@ -5,3 +5,4 @@ __pycache__/
 
 .claude/
 tools/pi/data/
+dist/

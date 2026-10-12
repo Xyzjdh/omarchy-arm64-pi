@@ -39,5 +39,29 @@ if omarchy-hw-aarch64-pi; then
     echo "rpi5-eeprom tooling installed; updates are never run automatically."
   fi
 
+  # omarchy-settings' mkinitcpio baseline adds hooks by name (btrfs-overlayfs
+  # among them) that have no aarch64 build in any configured repository. A
+  # missing hook file makes the next kernel-package update fail to rebuild the
+  # initramfs, so filter the hook list to what is actually installed. This is
+  # self-cleaning: a hook that gains an aarch64 build stays in.
+  if [[ -d /etc/mkinitcpio.conf.d ]]; then
+    cat >/etc/mkinitcpio.conf.d/pi-hooks.conf <<'EOF'
+# Raspberry Pi: keep only initramfs hooks whose implementations are installed.
+# Sourced after omarchy-settings' 00-omarchy-hooks.conf baseline, which names
+# hooks (btrfs-overlayfs) with no aarch64 build today.
+_pi_kept_hooks=()
+for _pi_hook in "${HOOKS[@]:-}"; do
+  if [[ -f /usr/lib/initcpio/install/$_pi_hook || -f /usr/lib/initcpio/hooks/$_pi_hook ]]; then
+    _pi_kept_hooks+=("$_pi_hook")
+  else
+    echo "omarchy-pi: dropping initramfs hook with no aarch64 build: $_pi_hook" >&2
+  fi
+done
+HOOKS=("${_pi_kept_hooks[@]:-}")
+unset _pi_kept_hooks _pi_hook
+EOF
+    echo "Wrote /etc/mkinitcpio.conf.d/pi-hooks.conf (filters unavailable initramfs hooks)."
+  fi
+
   echo "Raspberry Pi hardware checks complete."
 fi

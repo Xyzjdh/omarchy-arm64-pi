@@ -203,6 +203,7 @@ def main() -> int:
     p_check = sub.add_parser("check")
     p_check.add_argument("--data-dir", default="tools/pi/data")
     p_check.add_argument("--manifest-dir", default="install")
+    p_check.add_argument("--out-md", default=None)
     p_check.add_argument("--include-other", action="store_true")
     p_check.add_argument("--skip-aur", action="store_true")
 
@@ -239,6 +240,10 @@ def main() -> int:
     base_names = manifest_names(manifest_dir / "omarchy-base.packages")
     aarch64_names = manifest_names(manifest_dir / "omarchy-aarch64.packages")
     x86_only = set(manifest_names(manifest_dir / "omarchy-x86_64-only.packages"))
+    aarch64_missing = set()
+    missing_manifest = manifest_dir / "omarchy-aarch64-missing.packages"
+    if missing_manifest.exists():
+        aarch64_missing = set(manifest_names(missing_manifest))
     pi_names = []
     pi_manifest = manifest_dir / "omarchy-aarch64-pi.packages"
     if pi_manifest.exists():
@@ -247,11 +252,12 @@ def main() -> int:
     def compose(platform: str) -> list[tuple[str, str]]:
         if platform == "x86":
             names = base_names
-        elif platform == "aarch64":
-            names = [n for n in base_names if n not in x86_only] + aarch64_names
-        else:  # aarch64-pi
-            names = ([n for n in base_names if n not in x86_only]
-                     + aarch64_names + pi_names)
+        else:
+            names = [n for n in base_names
+                     if n not in x86_only and n not in aarch64_missing]
+            names += aarch64_names
+            if platform == "aarch64-pi":
+                names += pi_names
         return [("composed:" + platform, n) for n in names]
 
     entries = compose("x86") + compose("aarch64") + compose("aarch64-pi")
