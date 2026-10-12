@@ -71,6 +71,21 @@ grep -Fx 'systemctl disable --now snapper-timeline.timer' "$test_tmp/calls.log" 
 grep -Fx 'systemctl enable --now snapper-cleanup.timer limine-snapper-sync.service' "$test_tmp/calls.log" >/dev/null || fail "snapshot configure enables cleanup and Limine snapshot sync"
 pass "snapshot configure normalizes Snapper policy and services"
 
+# A system without snapper (snapper is an omarchy-other extra and needs a
+# btrfs root; no platform set carries it) must still apply cleanly.
+absent_root="$test_tmp/absent"
+mkdir -p "$test_tmp/plain-bin"
+TEST_LOG="$test_tmp/absent.log" \
+PATH="$test_tmp/plain-bin:$PATH" \
+OMARCHY_PATH="$ROOT" \
+OMARCHY_SNAPPER_CONFIG_PATH="$absent_root/etc/snapper/configs/root" \
+OMARCHY_SNAPPER_CONF_PATH="$absent_root/etc/conf.d/snapper" \
+  bash -euo pipefail "$ROOT/install/config/snapper.sh" >"$test_tmp/absent.out"
+grep -q "snapper is not installed" "$test_tmp/absent.out" ||
+  fail "snapshot configure explains the skip when snapper is absent"
+[[ ! -e $absent_root ]] || fail "snapshot configure writes nothing when snapper is absent"
+pass "snapshot configure skips cleanly when snapper is not installed"
+
 setup_system="$ROOT/bin/omarchy-apply-system"
 grep -F 'config/all.sh' "$setup_system" >/dev/null ||
   fail "system setup runs the config phase"

@@ -4,6 +4,15 @@ template="${OMARCHY_SNAPPER_TEMPLATE:-${OMARCHY_PATH:-/usr/share/omarchy}/defaul
 
 echo "Configuring Omarchy Snapper snapshot retention"
 
+# Snapper belongs to omarchy-other.packages (opt-in, and it needs a btrfs
+# root); no platform package set carries it. A system without it -- like the
+# Pi image's ext4 install, or any platform-set-only install -- must still
+# apply cleanly, so the whole setup is skipped rather than half-attempted.
+if ! command -v snapper >/dev/null 2>&1; then
+  echo "snapper is not installed; skipping snapshot retention setup"
+  exit 0
+fi
+
 if [[ ! -f $SNAPPER_CONFIG_PATH ]]; then
   mkdir -p "$(dirname "$SNAPPER_CONFIG_PATH")"
 

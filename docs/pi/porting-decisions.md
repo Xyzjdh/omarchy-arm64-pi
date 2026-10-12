@@ -153,6 +153,18 @@ conflicts near zero, the port's docs live in `docs/pi/*` and
 user-requested doc names map 1:1 (`docs/build-environment.md` →
 `docs/pi/build-environment.md`, etc.).
 
+## D11 — Snapper config setup tolerates an absent snapper
+
+`install/config/snapper.sh` (upstream's shared config script) assumed
+snapper is installed, but snapper belongs to `omarchy-other.packages`
+(opt-in, btrfs-only) and no platform package set carries it — so
+`omarchy-apply-system` died with "snapper: command not found" on any
+platform-set-only system, including the Pi image build's chroot and a
+real Pi's first install. The script now skips its whole setup (logged)
+when snapper is absent; systems with snapper behave exactly as before.
+`snapper-test.sh` covers both paths. **Revert**: remove the six-line
+guard in `install/config/snapper.sh`.
+
 ## Verification status of each decision
 
 - D2 package existence: **verified against live repo DBs** (Phase 4
