@@ -9,10 +9,12 @@ and still to be completed. Read that before relying on this.
 - A Raspberry Pi 5 (4 GB or more). 4 GB is the configuration this port
   tunes for (zram + animations off by default).
 - A working **Arch Linux ARM** aarch64 install for the Raspberry Pi,
-  booted from microSD or NVMe with its firmware boot chain working:
-  <https://archlinuxarm.org/platforms/armv8/broadcom/raspberry-pi-5>.
-  Start from the official ALARM image, complete its setup, and make sure
-  `pacman -Syu` works before you begin.
+  booted from microSD or NVMe with its firmware boot chain working.
+  ALARM has no Pi 5-specific platform page: follow the Raspberry Pi 4
+  instructions, whose `ArchLinuxARM-rpi-aarch64-latest.tar.gz` rootfs
+  covers the Pi 3, 4, 400 and 5:
+  <https://archlinuxarm.org/platforms/armv8/broadcom/raspberry-pi-4>.
+  Complete its setup, and make sure `pacman -Syu` works before you begin.
 - Ethernet or Wi-Fi, and at least 8 GiB free on `/`.
 - Root access (ALARM ships a root account; the installer must run as
   root).
@@ -23,13 +25,25 @@ data are untouched.
 
 ## Get the port
 
-Either download the release bundle (a tarball of this repository at the
-release commit, plus `dist/omarchy-dev-*.pkg.tar.zst` and its checksum)
-or clone the branch:
+Either download the release assets from
+<https://github.com/Xyzjdh/omarchy-arm64-pi/releases/tag/pi-2026.10.12>
+(the source tarball, plus the separate `omarchy-dev-*.pkg.tar.zst`
+package and its checksum) or clone the branch:
 
 ```bash
-git clone -b arm64-pi https://github.com/omacom/omarchy omarchy-pi
+git clone -b arm64-pi https://github.com/Xyzjdh/omarchy-arm64-pi omarchy-pi
 cd omarchy-pi
+```
+
+With the release assets, extract the tarball and drop the package (and
+its checksum) into `dist/` so the installer finds it:
+
+```bash
+tar -xzf omarchy-arm64-pi-2026.10.12-src.tar.gz
+cd omarchy-arm64-pi
+mkdir -p dist
+mv ../omarchy-dev-*-aarch64.pkg.tar.zst* dist/
+(cd dist && sha256sum -c omarchy-dev-*.sha256)
 ```
 
 From a checkout without `dist/`, build the package first (needs `git`,

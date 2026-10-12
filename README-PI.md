@@ -43,9 +43,9 @@ upstream project.
 On a working Arch Linux ARM Raspberry Pi 5 system:
 
 ```bash
-git clone -b arm64-pi <this repository> omarchy-pi
+git clone -b arm64-pi https://github.com/Xyzjdh/omarchy-arm64-pi omarchy-pi
 cd omarchy-pi
-python3 tools/pi/build-package.py     # or use a release bundle with dist/ included
+python3 tools/pi/build-package.py     # or fetch the release's omarchy-dev-*.pkg.tar.zst into dist/
 sudo tools/pi/omarchy-pi-install --dry-run
 sudo tools/pi/omarchy-pi-install
 ```
