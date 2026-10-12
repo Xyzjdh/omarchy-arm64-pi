@@ -215,6 +215,7 @@ mount "${LOOP}p2" "$ROOTFS" || die 4 "could not mount the root partition"
 log "extracting the ALARM rootfs with bsdtar (it preserves the tarball's security.capability xattrs, which GNU tar would drop)"
 bsdtar -xpf "$ALARM_TARBALL" -C "$ROOTFS"
 
+mkdir -p "$ROOTFS/opt/omarchy-port"
 mount --bind "$BUNDLE_DIR" "$ROOTFS/opt/omarchy-port" || die 5 "could not bind the bundle into the chroot"
 for sub in proc sys dev; do
   mount --rbind /$sub "$ROOTFS/$sub" || die 5 "could not bind $sub into the chroot"
